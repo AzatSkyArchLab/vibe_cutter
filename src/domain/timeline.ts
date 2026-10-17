@@ -124,13 +124,41 @@ export function addTrack(tl: Timeline, kind: TrackKind, ids: Ids): Timeline {
   return { ...tl, tracks };
 }
 
-/** Удаляет пустую дорожку; последнюю дорожку вида оставляет. */
-export function removeTrack(tl: Timeline, id: TrackId): Timeline {
+/**
+ * Удалить дорожку вместе с клипами (Delete Track в Resolve). Последняя
+ * дорожка вида остаётся — иначе некуда класть клипы. Связанные клипы
+ * на других дорожках становятся самостоятельными.
+ */
+export function deleteTrack(tl: Timeline, id: TrackId): Timeline {
   const track = tl.tracks.find((t) => t.id === id);
   if (!track) throw new TimelineError(`Нет дорожки ${id}`);
-  if (track.clips.length > 0) throw new TimelineError('Дорожка не пустая');
-  if (tracksOfKind(tl, track.kind).length === 1) throw new TimelineError('Нужна хотя бы одна дорожка этого вида');
-  return { ...tl, tracks: tl.tracks.filter((t) => t.id !== id) };
+  if (tracksOfKind(tl, track.kind).length === 1)
+    throw new TimelineError(track.kind === 'video' ? 'Нужна хотя бы одна видеодорожка' : 'Нужна хотя бы одна аудиодорожка');
+  return dropOrphanLinks({ ...tl, tracks: tl.tracks.filter((t) => t.id !== id) });
+}
+
+/** Удалить все пустые дорожки вида (Delete Empty Tracks); одна дорожка вида остаётся. */
+export function deleteEmptyTracks(tl: Timeline, kind: TrackKind): Timeline {
+  const ofKind = tracksOfKind(tl, kind);
+  const empty = new Set(ofKind.filter((t) => t.clips.length === 0).map((t) => t.id));
+  if (empty.size === 0) return tl;
+  // Если пусты все, оставляем первую (V1 / A1).
+  if (empty.size === ofKind.length) empty.delete(ofKind[0]!.id);
+  return { ...tl, tracks: tl.tracks.filter((t) => !empty.has(t.id)) };
+}
+
+/** Снимает связь у клипов, чья пара исчезла (клип «связан» сам с собой). */
+function dropOrphanLinks(tl: Timeline): Timeline {
+  const count = new Map<LinkId, number>();
+  for (const t of tl.tracks) for (const c of t.clips) if (c.linkId) count.set(c.linkId, (count.get(c.linkId) ?? 0) + 1);
+  if ([...count.values()].every((n) => n > 1)) return tl;
+  return {
+    ...tl,
+    tracks: tl.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) => (c.linkId && count.get(c.linkId) === 1 ? { ...c, linkId: null } : c)),
+    })),
+  };
 }
 
 // ── Размещение ────────────────────────────────────────────────────────────

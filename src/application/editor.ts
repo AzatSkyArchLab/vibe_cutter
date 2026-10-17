@@ -9,7 +9,7 @@ import { type TitleStyle, type TitleTemplate, defaultTitle, sanitizeTitle } from
 import {
   type ClipId, type Ids, type Timeline, type TrackId, type TrackKind,
   addTrack, allClips, appendAtEnd, assetLengthInFrames, clipEnd, findClip, insert, lift, overwrite,
-  placementsForAsset, removeTrack, rippleDelete, rippleDeleteRange, splitAt, splitClipsAt, timelineEnd,
+  placementsForAsset, deleteEmptyTracks, deleteTrack, rippleDelete, rippleDeleteRange, splitAt, splitClipsAt, timelineEnd,
   tracksOfKind, validateTimeline, withLinked,
 } from '../domain/timeline';
 import type { MediaHandle, MediaLibrary, MediaProber, MediaRef, ProjectFileRef, ProjectFiles, ProjectRepository, RecentProjects } from './ports';
@@ -82,6 +82,8 @@ export class Editor {
   private future: Project[] = [];
   private readonly mediaFiles = new Map<AssetId, MediaEntry>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** В этой вкладке есть изменения, которых ещё нет в автосохранении. */
+  private sessionDirty = false;
   private readonly ids: Ids = randomIds;
   private fileRef: ProjectFileRef | null = null;
   /** Номер версии монтажа; растёт с каждым изменением проекта. */
@@ -202,6 +204,7 @@ export class Editor {
   }
 
   private scheduleSave(): void {
+    this.sessionDirty = true;
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => void this.saveNow(), 400);
   }
@@ -218,11 +221,16 @@ export class Editor {
       if (await this.files.permission(ref, 'readwrite', false).catch(() => false)) await this.writeFile(ref);
       else if (this.fileRef === ref) this.set({ fileState: 'needs-permission' });
     }
+    // Сессию пишем, только если в этой вкладке что-то менялось: иначе вторая
+    // открытая вкладка при закрытии затёрла бы свежий монтаж своей старой копией.
+    if (!this.sessionDirty) return;
     const handles = new Map<AssetId, MediaHandle>();
     for (const [id, e] of this.mediaFiles) if (e.handle) handles.set(id, e.handle);
     try {
+      this.sessionDirty = false;
       await this.repo.save({ project: this.s.project, handles, file: this.fileRef, fileInSync: this.revision === this.fileRevision });
     } catch (err) {
+      this.sessionDirty = true;
       this.notify('error', `Автосохранение не удалось: ${message(err)}`);
     }
   }
@@ -266,6 +274,7 @@ export class Editor {
     const ok = await this.writeFile(ref);
     if (ok) {
       if (ref.handle) void this.recent.add(ref).catch(() => {});
+      this.sessionDirty = true;
       await this.saveNow();
       this.notify('info', `Проект сохранён: ${ref.name}`);
     }
@@ -368,6 +377,7 @@ export class Editor {
     );
     this.refreshMedia();
     if (ref.handle) void this.recent.add(ref).catch(() => {});
+    this.sessionDirty = true;
     await this.saveNow();
     const missing = project.assets.filter((a) => !this.mediaFiles.get(a.id)?.file).length;
     this.notify('info', `Открыт проект «${project.name}»` + (missing ? ` · нужно подключить файлов: ${missing}` : ''));
@@ -619,8 +629,14 @@ export class Editor {
     this.tryCommit(() => ({ timeline: addTrack(this.timeline, kind, this.ids) }));
   }
 
-  removeTrack(id: TrackId): void {
-    this.tryCommit(() => ({ timeline: removeTrack(this.timeline, id) }));
+  /** Удалить дорожку вместе с клипами (⌘Z вернёт). */
+  deleteTrack(id: TrackId): void {
+    this.tryCommit(() => ({ timeline: deleteTrack(this.timeline, id) }));
+  }
+
+  /** Удалить все пустые видео- или аудиодорожки. */
+  deleteEmptyTracks(kind: TrackKind): void {
+    this.tryCommit(() => ({ timeline: deleteEmptyTracks(this.timeline, kind) }));
   }
 
   /** Применить результат перетаскивания/подрезки, посчитанный интерфейсом через функции домена. */

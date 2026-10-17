@@ -10,6 +10,7 @@ import {
   type Clip, type ClipId, type Timeline, type Track, type TrackId,
   allClips, clipEnd, moveClips, timelineEnd, trackName, tracksOfKind, trimEnd, trimStart,
 } from '../domain/timeline';
+import { showContextMenu } from './context-menu';
 import { h } from './dom';
 import { wheelZoomFactor, zoomAt } from './timeline-zoom';
 
@@ -96,6 +97,7 @@ export class TimelineView {
       this.invalidate();
     });
     this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+    this.canvas.addEventListener('contextmenu', (e) => this.onContextMenu(e));
     this.wrap.addEventListener('dragover', (e) => this.onDragOver(e));
     this.wrap.addEventListener('dragleave', () => this.setDropFrame(null));
     this.wrap.addEventListener('drop', (e) => this.onDrop(e));
@@ -350,7 +352,8 @@ export class TimelineView {
       const hit = this.hit(e.offsetX, e.offsetY);
       this.hover = hit;
       this.canvas.style.cursor =
-        this.state.tool === 'blade' && hit.kind === 'clip' ? 'crosshair' : hit.kind === 'clip' && hit.edge ? 'ew-resize' : hit.kind === 'ruler' ? 'text' : 'default';
+        this.state.tool === 'blade' && hit.kind === 'clip' ? 'crosshair' : hit.kind === 'clip' && hit.edge ? 'ew-resize' : hit.kind === 'ruler' ? 'text' : hit.kind === 'header' ? 'context-menu' : 'default';
+      this.canvas.title = hit.kind === 'header' ? 'Правый щелчок — добавить или удалить дорожку' : '';
       this.invalidate();
       return;
     }
@@ -408,6 +411,39 @@ export class TimelineView {
   private scrubTo(x: number, noSnap: boolean): void {
     const f = this.xToFrame(x);
     this.editor.setPlayhead(f + this.snapDelta([f], new Set(), noSnap));
+  }
+
+  // ── Меню дорожки (правый щелчок по заголовку, как в Resolve) ──────────
+
+  private onContextMenu(e: MouseEvent): void {
+    e.preventDefault();
+    const row = this.rowAt(e.offsetY);
+    if (!row || e.offsetY < RULER_H) return;
+    const tl = this.editor.timeline;
+    const kind = row.track.kind;
+    const ofKind = tracksOfKind(tl, kind);
+    const name = trackName(tl, row.track.id);
+    const clips = row.track.clips.length;
+    const emptyCount = ofKind.filter((t) => t.clips.length === 0).length;
+    const removableEmpty = emptyCount === ofKind.length ? emptyCount - 1 : emptyCount;
+    const word = kind === 'video' ? 'видео' : 'аудио';
+    this.playback.stop();
+    showContextMenu(e.clientX, e.clientY, [
+      { label: `Добавить ${word}дорожку`, action: () => this.editor.addTrack(kind) },
+      'separator',
+      {
+        label: `Удалить дорожку ${name}${clips ? ` вместе с клипами (${clips})` : ''}`,
+        danger: clips > 0,
+        disabled: ofKind.length === 1,
+        hint: ofKind.length === 1 ? `Нужна хотя бы одна ${word}дорожка` : 'Отменить — ⌘Z',
+        action: () => this.editor.deleteTrack(row.track.id),
+      },
+      {
+        label: `Удалить пустые ${word}дорожки${removableEmpty ? ` (${removableEmpty})` : ''}`,
+        disabled: removableEmpty === 0,
+        action: () => this.editor.deleteEmptyTracks(kind),
+      },
+    ]);
   }
 
   // ── Перетаскивание из Media Pool ──────────────────────────────────────

@@ -224,3 +224,10 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 .grade.excellent, .grade.good { color: var(--ok); }
 .grade.fair { color: #f0b46c; }
 .grade.poor { color: var(--danger); }
+
+/* Контекстное меню */
+.ctx-menu { position: fixed; top: 0; left: 0; z-index: 90; min-width: 240px; }
+.menu-item:disabled { opacity: .4; }
+.menu-item:disabled:hover { background: transparent; color: inherit; }
+.menu-item.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+.menu-line { height: 1px; background: var(--line-2); margin: 4px 0; }

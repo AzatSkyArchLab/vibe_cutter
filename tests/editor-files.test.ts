@@ -141,6 +141,27 @@ describe('файл проекта', () => {
     expect(two.editor.timeline.tracks[0]!.clips).toHaveLength(1);
   });
 
+  it('вкладка без изменений не затирает автосохранение другой вкладки', async () => {
+    const one = fakes();
+    await one.editor.importFiles([{ file: video('a.mp4') }]);
+    await one.editor.saveNow();
+    // Вторая вкладка открыла ту же сессию и ничего не меняла…
+    const two = fakes();
+    two.setSession(one.getSession()!);
+    await two.editor.restore();
+    // …а в первой тем временем продолжили монтаж.
+    one.editor.appendAsset(one.editor.project.assets[0]!.id);
+    await one.editor.saveNow();
+    const fresh = one.getSession()!;
+    two.setSession(fresh);
+    await two.editor.saveNow(); // вторую вкладку закрывают
+    expect(two.getSession()).toBe(fresh);
+    // А если во второй вкладке правили — её версия сохраняется.
+    two.editor.rename('Другое имя');
+    await two.editor.saveNow();
+    expect(two.getSession()!.project.name).toBe('Другое имя');
+  });
+
   it('новый проект отвязывается от файла', async () => {
     const { editor } = fakes();
     await editor.importFiles([{ file: video('a.mp4') }]);
