@@ -28,6 +28,7 @@ export async function selfTest(engine: RenderEngine): Promise<Record<string, unk
   const meta = await probeMedia(new File([blob!], 'selftest.mp4', { type: 'video/mp4' }));
   return {
     encodeSupport: support.ok,
+    problems: support.problems,
     rendered: stats.frames === 30,
     bytes: blob?.size ?? 0,
     readBack: meta.video?.width === 1280 && Math.abs(meta.duration - 1) < 0.05 && meta.audio?.codec === 'aac',

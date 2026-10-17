@@ -8,7 +8,6 @@ import {
   type StreamTargetChunk,
   VideoSample,
   VideoSampleSource,
-  canEncodeAudio,
   canEncodeVideo,
 } from 'mediabunny';
 import type { EncodeSupport, RenderProgress, RenderStats } from '../application/ports';
@@ -38,11 +37,12 @@ export async function checkEncodeSupport(s: OutputSettings): Promise<EncodeSuppo
         (s.video.codec === 'avc' ? ' Для вертикального 4K выберите HEVC.' : ''),
     );
   }
-  const audioOk = await canEncodeAudio('aac', {
-    numberOfChannels: s.audio.channels,
-    sampleRate: s.audio.sampleRate,
-    bitrate: s.audio.bitrate,
-  });
+  // Звук проверяем настоящим кодированием с тем же подбором битрейта, что и в рендере:
+  // isConfigSupported на Windows отвечает «нет» на 320 кбит/с, хотя 192 кодер примет.
+  const audioOk = await aacProfile(s.audio.sampleRate, s.audio.channels, s.audio.bitrate).then(
+    () => true,
+    () => false,
+  );
   if (!audioOk) problems.push('Браузер не может кодировать звук AAC');
   return { ok: problems.length === 0, problems };
 }
