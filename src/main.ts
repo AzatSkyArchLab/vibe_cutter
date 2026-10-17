@@ -18,12 +18,13 @@ async function main() {
     return;
   }
 
-  const editor = new Editor({ probe: probeMedia }, new IdbProjectRepository(), new FsProjectFiles(), new IdbMediaLibrary(), new IdbRecentProjects());
+  const prober = { probe: probeMedia };
+  const editor = new Editor(prober, new IdbProjectRepository(), new FsProjectFiles(), new IdbMediaLibrary(), new IdbRecentProjects());
   const canvas = document.createElement('canvas');
   const preview = new BrowserPreview(canvas);
   const playback = new PlaybackController(editor, preview);
   const viewer = new Viewer(editor, playback, canvas);
-  mountApp(root, editor, playback, viewer, new WorkerRenderEngine());
+  mountApp(root, editor, playback, viewer, new WorkerRenderEngine(), prober);
 
   await editor.restore();
   playback.refresh();

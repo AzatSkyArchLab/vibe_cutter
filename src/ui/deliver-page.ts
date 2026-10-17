@@ -37,6 +37,7 @@ export class DeliverPage {
     private readonly editor: Editor,
     private readonly engine: RenderEngine,
     viewerSlot: HTMLElement,
+    modeSwitch: HTMLElement,
   ) {
     const seg = <T extends string>(options: [T, string][], get: () => T, set: (v: T) => void) => {
       const el = h('div', { class: 'seg' });
@@ -63,7 +64,7 @@ export class DeliverPage {
       h(
         'div',
         { class: 'deliver-settings' },
-        h('div', { class: 'panel-head' }, 'Настройки рендера'),
+        modeSwitch,
         h('section', {}, h('label', {}, 'Платформа', this.targetSeg), h('label', {}, 'Разрешение', this.resSelect), h('label', {}, 'Кодек', this.codecSeg)),
         h('section', {}, h('label', {}, 'Диапазон', this.rangeSeg), h('label', {}, 'Имя файла', this.nameInput)),
         h('section', {}, this.spec, this.notes),

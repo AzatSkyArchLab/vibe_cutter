@@ -35,10 +35,11 @@ export async function probeMedia(file: File): Promise<MediaMetadata> {
       };
     }
 
-    const tracks = [vt, at].filter((t) => t !== null);
-    // За начало берём первый кадр видео: звук и видео отсчитываются от него.
-    const startTime = vt ? await vt.getFirstTimestamp() : await at!.getFirstTimestamp();
-    const end = await media.input.computeDuration(tracks);
+    // За начало и конец берём видео: звук AAC обычно чуть длиннее (добивка кадра кодера),
+    // и по нему в конце клипа появился бы лишний повторённый кадр.
+    const main = vt ?? at!;
+    const startTime = await main.getFirstTimestamp();
+    const end = await main.computeDuration();
     return {
       name: file.name,
       sizeBytes: file.size,

@@ -88,22 +88,22 @@ export async function renderPlan(
     keyFrameInterval: settings.video.keyFrameIntervalSec,
     latencyMode: 'quality',
   });
-  const audioSource = new AudioSampleSource({
-    codec: 'aac',
-    quality: new Quality({ bitrate: settings.audio.bitrate }),
-  });
+  const audioSource = plan.includeAudio
+    ? new AudioSampleSource({ codec: 'aac', quality: new Quality({ bitrate: settings.audio.bitrate }) })
+    : null;
   output.addVideoTrack(videoSource, { frameRate: rate.num / rate.den, maximumPacketCount: totalFrames + 16 });
-  output.addAudioTrack(audioSource, { maximumPacketCount: Math.ceil(totalSamples / 1024) + 64 });
+  if (audioSource) output.addAudioTrack(audioSource, { maximumPacketCount: Math.ceil(totalSamples / 1024) + 64 });
 
   const mixSpans = mixSpansFor(plan, inputs, outRate);
   const mixer = new Mixer(mixSpans, outRate, totalSamples);
-  const encoderDelay = await aacEncoderDelay(outRate, settings.audio.channels, settings.audio.bitrate);
+  const encoderDelay = audioSource ? await aacEncoderDelay(outRate, settings.audio.channels, settings.audio.bitrate) : 0;
   const compositor = new Compositor(settings.width, settings.height, plan.fit, rate.num / rate.den);
 
   let frame = 0;
   let lastReport = 0;
 
   const writeAudioUntil = async (seconds: number) => {
+    if (!audioSource) return;
     const target = Math.min(totalSamples, Math.round(seconds * outRate));
     while (mixer.samplesWritten < target) {
       const block = await mixer.nextBlock(AUDIO_BLOCK);
@@ -180,7 +180,7 @@ export async function renderPlan(
     }
     if (frame !== totalFrames) throw new Error(`Собрано ${frame} кадров вместо ${totalFrames}`);
     await writeAudioUntil(Infinity);
-    if (mixer.samplesWritten !== totalSamples) throw new Error('Звук записан не полностью');
+    if (audioSource && mixer.samplesWritten !== totalSamples) throw new Error('Звук записан не полностью');
     await output.finalize();
     return { frames: frame, audioSamples: totalSamples, elapsedSec: (performance.now() - started) / 1000 };
   } catch (err) {

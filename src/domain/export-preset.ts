@@ -1,10 +1,12 @@
 import { type FrameRate, fpsValue } from './time';
 
 export type ExportTarget = 'youtube' | 'kinescope';
+/** Куда предназначен файл: хостинг или просто сжатый файл. */
+export type OutputPurpose = ExportTarget | 'file';
 export type VideoCodecChoice = 'avc' | 'hevc';
 
 export interface OutputSettings {
-  readonly target: ExportTarget;
+  readonly target: OutputPurpose;
   readonly width: number;
   readonly height: number;
   readonly frameRate: FrameRate;

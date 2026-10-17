@@ -47,6 +47,8 @@ export interface RenderPlan {
   readonly assets: readonly MediaAsset[];
   readonly video: readonly VideoSpan[];
   readonly audio: readonly AudioSpan[];
+  /** Писать ли звуковую дорожку (у таймлайна — всегда, у сжатия видео без звука — нет). */
+  readonly includeAudio: boolean;
   readonly warnings: readonly string[];
 }
 
@@ -159,6 +161,7 @@ export function buildRenderPlan(
     assets,
     video: shiftedVideo,
     audio: shiftedAudio,
+    includeAudio: true,
     warnings,
   };
 }

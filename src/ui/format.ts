@@ -1,7 +1,8 @@
+/** Размер в десятичных единицах — так же, как показывает Finder на Mac. */
 export function formatBytes(n: number): string {
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} КБ`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} МБ`;
-  return `${(n / 1024 ** 3).toFixed(2)} ГБ`;
+  if (n < 1e6) return `${Math.round(n / 1e3)} КБ`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1).replace(/\.?0+$/, '')} МБ`;
+  return `${(n / 1e9).toFixed(2).replace(/\.?0+$/, '')} ГБ`;
 }
 
 export function formatDuration(sec: number): string {

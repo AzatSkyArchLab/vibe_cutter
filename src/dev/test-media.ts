@@ -1,5 +1,5 @@
 import {
-  AudioSampleSink, AudioSample, AudioSampleSource, BufferTarget, CanvasSource, Mp4OutputFormat, Output, Quality,
+  AudioSampleSink, AudioSample, AudioSampleSource, BufferTarget, CanvasSource, MovOutputFormat, Mp4OutputFormat, Output, Quality,
   VideoSampleSink, ALL_FORMATS, BlobSource, Input,
 } from 'mediabunny';
 import { aacEncoderDelay } from '../engine/audio/encoder-delay';
@@ -24,20 +24,25 @@ export interface TestMediaOptions {
   /** Дрожание меток времени, доля кадра — имитация переменной частоты iPhone. */
   jitter?: number;
   name?: string;
+  /** MOV с несжатым звуком — как пишут камеры. */
+  mov?: boolean;
 }
 
 export async function makeTestVideo(o: TestMediaOptions): Promise<File> {
   const canvas = new OffscreenCanvas(o.width, o.height);
   const ctx = canvas.getContext('2d')!;
-  const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
+  const output = new Output({
+    format: o.mov ? new MovOutputFormat({ fastStart: 'in-memory' }) : new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    target: new BufferTarget(),
+  });
   const video = new CanvasSource(canvas, { codec: 'avc', quality: new Quality({ bitrate: 8e6 }), keyFrameInterval: 1 });
-  const audio = new AudioSampleSource({ codec: 'aac', quality: new Quality({ bitrate: 192e3 }) });
+  const audio = o.mov ? new AudioSampleSource({ codec: 'pcm-s16' }) : new AudioSampleSource({ codec: 'aac', quality: new Quality({ bitrate: 192e3 }) });
   output.addVideoTrack(video, { frameRate: o.fps });
   output.addAudioTrack(audio);
   await output.start();
 
   const rate = o.sampleRate ?? 48000;
-  const delay = await aacEncoderDelay(rate, 2, 192e3);
+  const delay = o.mov ? 0 : await aacEncoderDelay(rate, 2, 192e3);
   const perFrame = rate / o.fps;
   for (let i = 0; i < o.frames; i++) {
     drawFrame(ctx, o.width, o.height, i);
@@ -59,7 +64,7 @@ export async function makeTestVideo(o: TestMediaOptions): Promise<File> {
   }
   await output.finalize();
   const buf = (output.target as BufferTarget).buffer!;
-  return new File([buf], o.name ?? `test_${o.width}x${o.height}_${o.fps}.mp4`, { type: 'video/mp4' });
+  return new File([buf], o.name ?? `test_${o.width}x${o.height}_${o.fps}.${o.mov ? 'mov' : 'mp4'}`, { type: o.mov ? 'video/quicktime' : 'video/mp4' });
 }
 
 function drawFrame(ctx: OffscreenCanvasRenderingContext2D, w: number, h: number, index: number) {

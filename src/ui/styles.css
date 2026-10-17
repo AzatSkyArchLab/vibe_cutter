@@ -208,3 +208,19 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 }
 
 .pool-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+/* Рендер: переключатель таймлайн / сжатие */
+.deliver-switch { gap: 4px; padding: 6px; }
+.deliver-switch button { flex: 1; background: transparent; border: 1px solid transparent; color: var(--muted); text-transform: none; letter-spacing: 0; font-size: 12px; }
+.deliver-switch button.on { background: var(--panel-3); border-color: var(--line-2); color: #fff; }
+
+/* Сжатие */
+.compress-right { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; min-width: 0; padding: 16px; background: #0c0c0d; }
+.compress-video { max-width: 100%; max-height: calc(100% - 40px); background: #000; display: none; }
+.has-video .compress-video { display: block; }
+.compress-drop { border: 2px dashed var(--line-2); border-radius: 10px; padding: 40px 60px; text-align: center; color: var(--muted); font-size: 15px; display: flex; flex-direction: column; gap: 6px; }
+.has-video .compress-drop { display: none; }
+.chip { padding: 2px 8px; font-size: 11px; }
+.grade.excellent, .grade.good { color: var(--ok); }
+.grade.fair { color: #f0b46c; }
+.grade.poor { color: var(--danger); }

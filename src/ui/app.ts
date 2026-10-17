@@ -1,9 +1,10 @@
 import type { Editor, EditorState } from '../application/editor';
 import type { PlaybackController } from '../application/playback';
-import type { RenderEngine } from '../application/ports';
+import type { FileCompressor, MediaProber, RenderEngine } from '../application/ports';
 import { RESOLUTIONS, type FitMode } from '../domain/project';
 import { filesFromDrop, projectFileFromDrop } from '../infrastructure/file-access';
 import { ProjectMenu } from './project-menu';
+import { CompressPage } from './compress-page';
 import { DeliverPage } from './deliver-page';
 import { h, setText } from './dom';
 import { formatFps } from './format';
@@ -15,7 +16,14 @@ import { TimelineView } from './timeline-view';
 import { Viewer } from './viewer';
 
 /** Оболочка: верхняя панель, страницы «Монтаж» и «Рендер», уведомления, перетаскивание файлов. */
-export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackController, viewer: Viewer, renderEngine: RenderEngine): void {
+export function mountApp(
+  root: HTMLElement,
+  editor: Editor,
+  playback: PlaybackController,
+  viewer: Viewer,
+  renderEngine: RenderEngine & FileCompressor,
+  prober: MediaProber,
+): void {
   const pool = new MediaPool(editor);
   const titles = new TitlesLibrary(editor, playback);
   const inspector = new TitleInspector(editor);
@@ -91,7 +99,26 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
   const viewerSlotDeliver = h('div', { style: 'display:grid;min-height:0;min-width:0' });
   const editTop = h('div', { class: 'edit-top' }, library, viewerSlotEdit, inspector.el);
   const editPage = h('div', { class: 'page edit' }, editTop, timeline.el);
-  const deliver = new DeliverPage(editor, renderEngine, viewerSlotDeliver);
+  // Страница «Рендер»: таймлайн или сжатие отдельного файла.
+  let deliverMode: 'timeline' | 'compress' = 'timeline';
+  const modeSwitch = () => {
+    const el = h(
+      'div',
+      { class: 'panel-head deliver-switch' },
+      h('button', { 'data-mode': 'timeline', onclick: () => setDeliverMode('timeline') }, 'Рендер таймлайна'),
+      h('button', { 'data-mode': 'compress', onclick: () => setDeliverMode('compress') }, 'Сжать файл'),
+    );
+    switches.push(el);
+    return el;
+  };
+  const switches: HTMLElement[] = [];
+  const deliver = new DeliverPage(editor, renderEngine, viewerSlotDeliver, modeSwitch());
+  const compress = new CompressPage(editor, prober, renderEngine, modeSwitch());
+  const setDeliverMode = (m: 'timeline' | 'compress') => {
+    deliverMode = m;
+    if (m === 'compress') playback.stop();
+    update(editor.state);
+  };
 
   const nameInput = h('input', {
     class: 'project-name',
@@ -111,7 +138,7 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
       'div',
       { class: 'app' },
       h('div', { class: 'topbar' }, h('div', { class: 'logo' }, 'vibe', h('span', {}, '_'), 'cutter'), projectMenu.button, nameInput, projectMenu.status),
-      h('div', { style: 'display:grid;min-height:0' }, editPage, deliver.el),
+      h('div', { style: 'display:grid;min-height:0' }, editPage, deliver.el, compress.el),
       h('div', { class: 'pagebar' }, editTab, deliverTab),
     ),
     toasts,
@@ -133,7 +160,8 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
 
   // Файлы из Finder в любое место окна
   let dragDepth = 0;
-  const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files') ?? false;
+  // На странице сжатия файлы выбираются для сжатия, а не импортируются в проект.
+  const hasFiles = (e: DragEvent) => (e.dataTransfer?.types.includes('Files') ?? false) && !compress.el.classList.contains('on');
   window.addEventListener('dragenter', (e) => hasFiles(e) && (dragDepth++, dropOverlay.classList.add('on')));
   window.addEventListener('dragleave', (e) => hasFiles(e) && --dragDepth <= 0 && ((dragDepth = 0), dropOverlay.classList.remove('on')));
   window.addEventListener('dragover', (e) => hasFiles(e) && e.preventDefault());
@@ -156,14 +184,16 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
 
   window.addEventListener('beforeunload', (e) => {
     void editor.saveNow();
-    if (deliver.busy) e.preventDefault();
+    if (deliver.busy || compress.busy) e.preventDefault();
   });
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && void editor.saveNow());
 
   const update = (s: EditorState) => {
     const onEdit = s.page === 'edit';
     editPage.classList.toggle('on', onEdit);
-    deliver.el.classList.toggle('on', !onEdit);
+    deliver.el.classList.toggle('on', !onEdit && deliverMode === 'timeline');
+    compress.el.classList.toggle('on', !onEdit && deliverMode === 'compress');
+    for (const sw of switches) for (const b of sw.querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === deliverMode);
     editTab.classList.toggle('on', onEdit);
     deliverTab.classList.toggle('on', !onEdit);
     const slot = onEdit ? viewerSlotEdit : viewerSlotDeliver;

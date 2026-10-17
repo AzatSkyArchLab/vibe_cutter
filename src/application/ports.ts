@@ -1,4 +1,5 @@
-import type { AssetId, MediaMetadata } from '../domain/media';
+import type { CompressPlan } from '../domain/compress';
+import type { AssetId, MediaAsset, MediaMetadata } from '../domain/media';
 import type { OutputSettings } from '../domain/export-preset';
 import type { Project } from '../domain/project';
 import type { RenderPlan } from '../domain/render-plan';
@@ -120,4 +121,38 @@ export interface PreviewEngine {
   ): void;
   stop(): void;
   readonly playing: boolean;
+}
+
+// ── Сжатие отдельного файла ──────────────────────────────────────────────
+
+export interface CompressResult {
+  readonly bytes: number;
+  /** Сколько проходов понадобилось, чтобы попасть в размер. */
+  readonly passes: number;
+  readonly videoBitrate: number;
+  readonly elapsedSec: number;
+}
+
+export interface RemuxResult {
+  readonly bytes: number;
+  readonly videoCopied: boolean;
+  readonly audioCopied: boolean;
+  readonly elapsedSec: number;
+}
+
+export interface Task<T> {
+  readonly done: Promise<{ result: T; blob: Blob | null }>;
+  cancel(): void;
+}
+
+export interface FileCompressor {
+  compress(
+    source: MediaAsset,
+    file: MediaRef,
+    plan: CompressPlan,
+    target: RenderTarget,
+    onProgress: (pass: number, p: RenderProgress) => void,
+  ): Task<CompressResult>;
+  /** Сменить контейнер без перекодирования видео. */
+  remux(file: MediaRef, target: RenderTarget, onProgress: (fraction: number) => void): Task<RemuxResult>;
 }
