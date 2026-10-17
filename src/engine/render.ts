@@ -18,7 +18,7 @@ import { type RenderPlan, videoSourceTime } from '../domain/render-plan';
 import { framesToSeconds } from '../domain/time';
 import { Mixer } from './audio/mixer';
 import { mixSpansFor } from './audio/spans';
-import { aacEncoderDelay } from './audio/encoder-delay';
+import { aacProfile } from './audio/encoder-delay';
 import { Compositor } from './compositor';
 import { MediaInputs } from './media-input';
 
@@ -88,15 +88,15 @@ export async function renderPlan(
     keyFrameInterval: settings.video.keyFrameIntervalSec,
     latencyMode: 'quality',
   });
-  const audioSource = plan.includeAudio
-    ? new AudioSampleSource({ codec: 'aac', quality: new Quality({ bitrate: settings.audio.bitrate }) })
-    : null;
+  // Битрейт звука — тот, что принимает кодер этой системы (Windows: не выше 192 кбит/с).
+  const aac = plan.includeAudio ? await aacProfile(outRate, settings.audio.channels, settings.audio.bitrate) : null;
+  const audioSource = aac ? new AudioSampleSource({ codec: 'aac', quality: new Quality({ bitrate: aac.bitrate }) }) : null;
   output.addVideoTrack(videoSource, { frameRate: rate.num / rate.den, maximumPacketCount: totalFrames + 16 });
   if (audioSource) output.addAudioTrack(audioSource, { maximumPacketCount: Math.ceil(totalSamples / 1024) + 64 });
 
   const mixSpans = mixSpansFor(plan, inputs, outRate);
   const mixer = new Mixer(mixSpans, outRate, totalSamples);
-  const encoderDelay = audioSource ? await aacEncoderDelay(outRate, settings.audio.channels, settings.audio.bitrate) : 0;
+  const encoderDelay = aac?.delay ?? 0;
   const compositor = new Compositor(settings.width, settings.height, plan.fit, rate.num / rate.den);
 
   let frame = 0;

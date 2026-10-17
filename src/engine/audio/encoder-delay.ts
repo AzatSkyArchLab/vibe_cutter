@@ -21,6 +21,33 @@ export function aacEncoderDelay(sampleRate: number, channels: number, bitrate: n
   return p;
 }
 
+/** Битрейты AAC, которые понимают все системные кодеры (Windows Media Foundation — только они). */
+const AAC_FALLBACK_BITRATES = [192_000, 160_000, 128_000, 96_000];
+
+export interface AacProfile {
+  readonly bitrate: number;
+  /** Задержка кодера в отсчётах. */
+  readonly delay: number;
+}
+
+/**
+ * Битрейт AAC, который реально принимает кодер этой системы, и его задержка.
+ * На Mac кодер берёт и 320 кбит/с, на Windows — только 96…192, поэтому
+ * при отказе спускаемся к ближайшему поддерживаемому значению.
+ */
+export async function aacProfile(sampleRate: number, channels: number, desired: number): Promise<AacProfile> {
+  const candidates = [desired, ...AAC_FALLBACK_BITRATES.filter((b) => b < desired)];
+  let lastError: unknown = null;
+  for (const bitrate of candidates) {
+    try {
+      return { bitrate, delay: await aacEncoderDelay(sampleRate, channels, bitrate) };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(`Кодер AAC недоступен: ${lastError instanceof Error ? lastError.message : lastError}`);
+}
+
 async function measure(sampleRate: number, channels: number, bitrate: number): Promise<number> {
   const total = sampleRate; // 1 с
   const onset = Math.round(sampleRate * 0.25);
@@ -37,6 +64,7 @@ async function measure(sampleRate: number, channels: number, bitrate: number): P
     error: (e) => (error = e),
   });
   encoder.configure({ codec: 'mp4a.40.2', sampleRate, numberOfChannels: channels, bitrate });
+  if (error) throw error;
   const block = 1024;
   for (let from = 0; from < total; from += block) {
     const n = Math.min(block, total - from);
@@ -50,8 +78,13 @@ async function measure(sampleRate: number, channels: number, bitrate: number): P
     encoder.encode(ad);
     ad.close();
   }
-  await encoder.flush();
-  encoder.close();
+  try {
+    await encoder.flush();
+  } catch (err) {
+    throw error ?? err;
+  } finally {
+    if (encoder.state !== 'closed') encoder.close();
+  }
   if (error) throw error;
   if (!decoderConfig) throw new Error('AAC-кодер не выдал конфигурацию');
 

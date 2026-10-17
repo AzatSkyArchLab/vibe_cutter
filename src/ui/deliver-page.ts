@@ -138,7 +138,7 @@ export class DeliverPage {
     }
     this.spec.replaceChildren(
       h('div', {}, 'Видео: ', h('b', {}, `${s.video.codec === 'avc' ? 'H.264 High' : 'HEVC Main'} · ${s.width}×${s.height} · ${formatFps(rate.num, rate.den)} к/с · ${(s.video.bitrate / 1e6).toFixed(0)} Мбит/с`)),
-      h('div', {}, 'Звук: ', h('b', {}, `AAC-LC · 48 кГц · стерео · ${s.audio.bitrate / 1000} кбит/с`)),
+      h('div', {}, 'Звук: ', h('b', {}, `AAC-LC · 48 кГц · стерео · до ${s.audio.bitrate / 1000} кбит/с`)),
       h('div', {}, 'Файл: ', h('b', {}, 'MP4 · Fast Start · ключевой кадр каждые 0.5 с · Rec.709 SDR')),
       h('div', {}, 'Длительность: ', h('b', {}, `${formatTimecode(frames, rate)} · ≈ ${formatBytes((frames / (rate.num / rate.den)) * (s.video.bitrate + s.audio.bitrate) / 8)}`)),
     );
