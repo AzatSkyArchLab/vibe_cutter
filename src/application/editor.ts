@@ -1,6 +1,9 @@
 import { newAssetId, randomIds } from '../domain/ids';
 import type { AssetId, MediaAsset } from '../domain/media';
-import { type Project, type TimelineSettings, changeSettings, findAsset, isTimelineEmpty, newProject } from '../domain/project';
+import {
+  PROJECT_EXT, type Project, type TimelineSettings, changeSettings, findAsset, isTimelineEmpty, nameFromFile, newProject,
+  parseProjectFile, serializeProjectFile,
+} from '../domain/project';
 import { type FrameRate, frameRate, sameFrameRate } from '../domain/time';
 import {
   type ClipId, type Ids, type Timeline, type TrackId, type TrackKind,
@@ -8,7 +11,7 @@ import {
   placementsForAsset, removeTrack, rippleDelete, rippleDeleteRange, splitAt, splitClipsAt, timelineEnd,
   tracksOfKind, validateTimeline, withLinked,
 } from '../domain/timeline';
-import type { MediaHandle, MediaProber, MediaRef, ProjectRepository } from './ports';
+import type { MediaHandle, MediaLibrary, MediaProber, MediaRef, ProjectFileRef, ProjectFiles, ProjectRepository, RecentProjects } from './ports';
 
 /**
  * Состояние редактора и все команды монтажа. Интерфейс только читает
@@ -30,6 +33,14 @@ export interface Marks {
 /** Доступность исходника в этой сессии браузера. */
 export type MediaStatus = 'online' | 'needs-permission' | 'offline';
 
+/**
+ * Состояние файла проекта на диске:
+ * none — проект ещё не сохранялся в файл; saved — файл совпадает с монтажом;
+ * unsaved — есть изменения, которые ещё не записаны; saving — идёт запись;
+ * needs-permission — браузер просит подтвердить запись (⌘S); error — запись не удалась.
+ */
+export type FileState = 'none' | 'saved' | 'unsaved' | 'saving' | 'needs-permission' | 'error';
+
 export interface EditorState {
   readonly project: Project;
   readonly page: Page;
@@ -43,6 +54,9 @@ export interface EditorState {
   readonly media: ReadonlyMap<AssetId, MediaStatus>;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Имя файла проекта (.vcut), если проект сохранён на диск. */
+  readonly projectFile: string | null;
+  readonly fileState: FileState;
 }
 
 export interface Notice {
@@ -56,6 +70,7 @@ interface MediaEntry {
 }
 
 const HISTORY_LIMIT = 300;
+const UNTITLED = 'Без названия';
 const DEFAULT_SETTINGS: TimelineSettings = { width: 1920, height: 1080, frameRate: frameRate(30), fit: 'fit' };
 
 export class Editor {
@@ -67,13 +82,23 @@ export class Editor {
   private readonly mediaFiles = new Map<AssetId, MediaEntry>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly ids: Ids = randomIds;
+  private fileRef: ProjectFileRef | null = null;
+  /** Номер версии монтажа; растёт с каждым изменением проекта. */
+  private revision = 0;
+  /** Версия, записанная в файл проекта. */
+  private fileRevision = 0;
+  /** Записи в файл идут строго по очереди. */
+  private fileWrites: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly prober: MediaProber,
     private readonly repo: ProjectRepository,
+    private readonly files: ProjectFiles,
+    private readonly library: MediaLibrary,
+    private readonly recent: RecentProjects,
   ) {
     this.s = {
-      project: newProject('Без названия', DEFAULT_SETTINGS, this.ids),
+      project: newProject(UNTITLED, DEFAULT_SETTINGS, this.ids),
       page: 'edit',
       playhead: 0,
       selection: [],
@@ -85,6 +110,8 @@ export class Editor {
       media: new Map(),
       canUndo: false,
       canRedo: false,
+      projectFile: null,
+      fileState: 'none',
     };
   }
 
@@ -134,8 +161,9 @@ export class Editor {
     return a ? assetLengthInFrames(a, this.rate) : 0;
   };
 
-  // ── Загрузка и сохранение ──────────────────────────────────────────────
+  // ── Рабочая сессия (автосохранение в браузере) ──────────────────────────
 
+  /** Восстановление после перезагрузки страницы или сбоя вкладки. */
   async restore(): Promise<void> {
     let saved;
     try {
@@ -145,22 +173,24 @@ export class Editor {
       return;
     }
     if (!saved) return;
-    for (const asset of saved.project.assets) {
-      const handle = saved.handles.get(asset.id) ?? null;
-      let file: MediaRef | null = null;
-      if (handle && (await handle.queryPermission({ mode: 'read' })) === 'granted') file = await safeGetFile(handle);
-      this.mediaFiles.set(asset.id, { file, handle });
-    }
-    this.set({ project: saved.project, playhead: 0, selection: [] }, false);
+    await this.linkMedia(saved.project, saved.handles);
+    this.fileRef = saved.file;
+    this.revision = saved.fileInSync ? 0 : 1;
+    this.fileRevision = 0;
+    this.set({ project: saved.project, playhead: 0, selection: [], ...this.fileStatePatch() }, false);
     this.refreshMedia();
   }
 
   /** Повторный запрос доступа к файлам после перезагрузки (нужен жест пользователя). */
   async regrantAccess(): Promise<void> {
-    for (const [, entry] of this.mediaFiles) {
+    for (const [id, entry] of this.mediaFiles) {
       if (entry.file || !entry.handle) continue;
       try {
-        if ((await entry.handle.requestPermission({ mode: 'read' })) === 'granted') entry.file = await safeGetFile(entry.handle);
+        if ((await entry.handle.requestPermission({ mode: 'read' })) !== 'granted') continue;
+        const file = await safeGetFile(entry.handle);
+        const asset = findAsset(this.s.project, id);
+        if (file && asset && file.size === asset.sizeBytes) entry.file = file;
+        else entry.handle = null;
       } catch {
         /* пользователь отказал — файл останется недоступным */
       }
@@ -173,25 +203,239 @@ export class Editor {
     this.saveTimer = setTimeout(() => void this.saveNow(), 400);
   }
 
+  /**
+   * Автосохранение: сначала файл проекта (если он есть и запись разрешена),
+   * затем рабочая сессия в браузере — она же страховка, если файл недоступен.
+   */
   async saveNow(): Promise<void> {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = null;
+    const ref = this.fileRef;
+    if (ref?.handle && this.revision !== this.fileRevision) {
+      if (await this.files.permission(ref, 'readwrite', false).catch(() => false)) await this.writeFile(ref);
+      else if (this.fileRef === ref) this.set({ fileState: 'needs-permission' });
+    }
     const handles = new Map<AssetId, MediaHandle>();
     for (const [id, e] of this.mediaFiles) if (e.handle) handles.set(id, e.handle);
     try {
-      await this.repo.save(this.s.project, handles);
+      await this.repo.save({ project: this.s.project, handles, file: this.fileRef, fileInSync: this.revision === this.fileRevision });
     } catch (err) {
       this.notify('error', `Автосохранение не удалось: ${message(err)}`);
     }
+  }
+
+  // ── Файл проекта (.vcut) ────────────────────────────────────────────────
+
+  /** Есть ли работа, которой нет в файле проекта (пустой проект не в счёт). */
+  hasUnsavedWork(): boolean {
+    const p = this.s.project;
+    if (p.assets.length === 0 && isTimelineEmpty(p)) return false;
+    return !this.fileRef || this.revision !== this.fileRevision;
+  }
+
+  /**
+   * ⌘S — сохранить в текущий файл, ⇧⌘S (as) — выбрать новый.
+   * Вызывать из обработчика действия пользователя: браузер может спросить разрешение.
+   */
+  async saveToFile(opts: { as?: boolean } = {}): Promise<boolean> {
+    let ref = this.fileRef;
+    try {
+      if (!ref || opts.as || !ref.handle) {
+        const picked = await this.files.pickSaveTarget(safeFileName(this.s.project.name) + PROJECT_EXT);
+        if (!picked) return false;
+        ref = picked;
+      } else if (!(await this.files.permission(ref, 'readwrite', true))) {
+        this.set({ fileState: 'needs-permission' });
+        this.notify('error', 'Браузер не разрешил запись в файл проекта. Сохраните его как новый файл (⇧⌘S).');
+        return false;
+      }
+    } catch (err) {
+      this.notify('error', `Не удалось сохранить проект: ${message(err)}`);
+      return false;
+    }
+    if (ref !== this.fileRef && this.s.project.name === UNTITLED) {
+      // Безымянный проект получает имя файла.
+      this.set({ project: { ...this.s.project, name: nameFromFile(ref.name) } }, false);
+      this.revision++;
+    }
+    this.fileRef = ref;
+    this.set({ projectFile: ref.name }, false);
+    const ok = await this.writeFile(ref);
+    if (ok) {
+      if (ref.handle) void this.recent.add(ref).catch(() => {});
+      await this.saveNow();
+      this.notify('info', `Проект сохранён: ${ref.name}`);
+    }
+    return ok;
+  }
+
+  private writeFile(ref: ProjectFileRef): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      const rev = this.revision;
+      const text = serializeProjectFile(this.s.project);
+      if (this.fileRef === ref) this.set({ fileState: 'saving' });
+      try {
+        await this.files.write(ref, text);
+        if (this.fileRef === ref) {
+          this.fileRevision = rev;
+          this.set(this.fileStatePatch());
+        }
+        return true;
+      } catch (err) {
+        if (this.fileRef === ref) this.set({ fileState: 'error' });
+        this.notify('error', `Не удалось записать «${ref.name}»: ${message(err)}`);
+        return false;
+      }
+    };
+    const p = this.fileWrites.then(run, run);
+    this.fileWrites = p;
+    return p;
+  }
+
+  /** ⌘O — открыть файл проекта через диалог. */
+  async openFromPicker(): Promise<boolean> {
+    let picked;
+    try {
+      picked = await this.files.pickAndRead();
+    } catch (err) {
+      this.notify('error', `Не удалось открыть файл: ${message(err)}`);
+      return false;
+    }
+    return picked ? this.load(picked.text, picked.ref) : false;
+  }
+
+  /** Открыть недавний проект. Вызывать из обработчика щелчка: может понадобиться разрешение. */
+  async openRecent(ref: ProjectFileRef): Promise<boolean> {
+    let text: string;
+    try {
+      if (!(await this.files.permission(ref, 'read', true))) {
+        this.notify('error', `Нет разрешения на чтение «${ref.name}»`);
+        return false;
+      }
+      text = await this.files.read(ref);
+    } catch {
+      this.notify('error', `Файл «${ref.name}» не найден — он мог быть перемещён или удалён`);
+      void this.recent.remove(ref).catch(() => {});
+      return false;
+    }
+    return this.load(text, ref);
+  }
+
+  /** Файл проекта, перетащенный в окно. */
+  async openDropped(file: File, handle: FileSystemFileHandle | null): Promise<boolean> {
+    return this.load(await file.text(), { name: file.name, handle });
+  }
+
+  async recentProjects(): Promise<ProjectFileRef[]> {
+    try {
+      return await this.recent.list();
+    } catch {
+      return [];
+    }
+  }
+
+  private async load(text: string, ref: ProjectFileRef): Promise<boolean> {
+    let project: Project;
+    try {
+      project = parseProjectFile(text);
+    } catch (err) {
+      this.notify('error', `«${ref.name}»: ${message(err)}`);
+      return false;
+    }
+    await this.fileWrites.catch(() => {});
+    this.past = [];
+    this.future = [];
+    this.mediaFiles.clear();
+    await this.linkMedia(project, new Map());
+    this.fileRef = ref;
+    this.revision = 0;
+    this.fileRevision = 0;
+    this.set(
+      {
+        project,
+        playhead: 0,
+        selection: [],
+        selectedAsset: null,
+        marks: { in: null, out: null },
+        canUndo: false,
+        canRedo: false,
+        ...this.fileStatePatch(),
+      },
+      false,
+    );
+    this.refreshMedia();
+    if (ref.handle) void this.recent.add(ref).catch(() => {});
+    await this.saveNow();
+    const missing = project.assets.filter((a) => !this.mediaFiles.get(a.id)?.file).length;
+    this.notify('info', `Открыт проект «${project.name}»` + (missing ? ` · нужно подключить файлов: ${missing}` : ''));
+    return true;
   }
 
   newProject(settings: TimelineSettings = this.s.project.settings): void {
     this.past = [];
     this.future = [];
     this.mediaFiles.clear();
-    this.set({ project: newProject('Без названия', settings, this.ids), playhead: 0, selection: [], selectedAsset: null, marks: { in: null, out: null } }, false);
+    this.fileRef = null;
+    this.revision = 0;
+    this.fileRevision = 0;
+    this.set(
+      {
+        project: newProject(UNTITLED, settings, this.ids),
+        playhead: 0,
+        selection: [],
+        selectedAsset: null,
+        marks: { in: null, out: null },
+        canUndo: false,
+        canRedo: false,
+        ...this.fileStatePatch(),
+      },
+      false,
+    );
     this.refreshMedia();
     this.scheduleSave();
+  }
+
+  private fileStatePatch(): Pick<EditorState, 'projectFile' | 'fileState'> {
+    if (!this.fileRef) return { projectFile: null, fileState: 'none' };
+    return { projectFile: this.fileRef.name, fileState: this.revision === this.fileRevision ? 'saved' : 'unsaved' };
+  }
+
+  /**
+   * Находит исходники проекта: сначала по сохранённым ссылкам сессии,
+   * затем в библиотеке по имени и размеру. Файл с другим размером не подключается.
+   */
+  private async linkMedia(project: Project, known: ReadonlyMap<AssetId, MediaHandle>): Promise<void> {
+    for (const asset of project.assets) {
+      let handle = known.get(asset.id) ?? null;
+      if (!handle) handle = await this.library.find(asset.name, asset.sizeBytes).catch(() => null);
+      let file: MediaRef | null = null;
+      if (handle && (await handle.queryPermission({ mode: 'read' }).catch(() => 'denied')) === 'granted') {
+        file = await safeGetFile(handle);
+        // Файл с тем же именем, но другого размера — это другой файл: ссылку отбрасываем.
+        if (!file || file.size !== asset.sizeBytes) {
+          file = null;
+          handle = null;
+        }
+      }
+      this.mediaFiles.set(asset.id, { file, handle });
+    }
+  }
+
+  /** Подключить недостающие исходники из выбранных файлов (по имени и размеру). Новые файлы не импортируются. */
+  async relinkFiles(items: readonly { file: File; handle?: MediaHandle | null }[]): Promise<number> {
+    let linked = 0;
+    for (const { file, handle } of items) {
+      const asset = this.s.project.assets.find((a) => a.name === file.name && a.sizeBytes === file.size);
+      if (!asset || this.mediaFiles.get(asset.id)?.file) continue;
+      this.mediaFiles.set(asset.id, { file, handle: handle ?? null });
+      if (handle) void this.library.remember(file.name, file.size, handle).catch(() => {});
+      linked++;
+    }
+    if (linked) {
+      this.refreshMedia();
+      this.scheduleSave();
+    }
+    return linked;
   }
 
   // ── Импорт ──────────────────────────────────────────────────────────────
@@ -203,11 +447,14 @@ export class Editor {
   async importFiles(items: readonly { file: File; handle?: MediaHandle | null }[]): Promise<AssetId[]> {
     const added: MediaAsset[] = [];
     const ids: AssetId[] = [];
+    let relinked = false;
     for (const { file, handle } of items) {
+      if (handle) void this.library.remember(file.name, file.size, handle).catch(() => {});
       const known = this.s.project.assets.find((a) => a.name === file.name && a.sizeBytes === file.size);
       if (known) {
         this.mediaFiles.set(known.id, { file, handle: handle ?? this.mediaFiles.get(known.id)?.handle ?? null });
         ids.push(known.id);
+        relinked = true;
         continue;
       }
       try {
@@ -231,7 +478,7 @@ export class Editor {
         this.notify('info', `Частота таймлайна: ${(firstVideo.video.frameRate.num / firstVideo.video.frameRate.den).toFixed(3).replace(/\.?0+$/, '')} кадр/с — по «${firstVideo.name}»`);
       }
       this.commit(project, { selectedAsset: added[0]!.id });
-    }
+    } else if (relinked) this.scheduleSave();
     this.refreshMedia();
     return ids;
   }
@@ -466,7 +713,8 @@ export class Editor {
   }
 
   private afterProjectChange(): void {
-    this.set({ canUndo: this.past.length > 0, canRedo: this.future.length > 0 }, false);
+    this.revision++;
+    this.set({ canUndo: this.past.length > 0, canRedo: this.future.length > 0, ...this.fileStatePatch() }, false);
     this.refreshMedia();
     this.scheduleSave();
   }
@@ -488,5 +736,7 @@ async function safeGetFile(handle: MediaHandle): Promise<File | null> {
     return null;
   }
 }
+
+const safeFileName = (s: string) => s.replace(/[\\/:*?"<>|]+/g, '_').trim() || UNTITLED;
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));

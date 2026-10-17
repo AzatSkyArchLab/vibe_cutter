@@ -2,7 +2,7 @@ import type { Editor, EditorState } from '../application/editor';
 import type { AssetId, MediaAsset } from '../domain/media';
 import { formatTimecode, secondsToFrames } from '../domain/time';
 import { MediaInput } from '../engine/media-input';
-import { pickVideoFiles } from '../infrastructure/file-access';
+import { type PickedFile, pickFolderVideos, pickVideoFiles } from '../infrastructure/file-access';
 import { h } from './dom';
 import { formatBytes, formatFps } from './format';
 import { ASSET_MIME } from './timeline-view';
@@ -41,6 +41,18 @@ export class MediaPool {
     }
   }
 
+  /** Подключить недостающие исходники проекта, не импортируя лишнего. */
+  private async relink(pick: () => Promise<PickedFile[] | null>): Promise<void> {
+    try {
+      const files = await pick();
+      if (!files) return;
+      const n = await this.editor.relinkFiles(files);
+      this.editor.notify(n ? 'info' : 'error', n ? `Подключено файлов: ${n}` : 'Среди выбранных нет исходников этого проекта (сравниваются имя и размер)');
+    } catch (err) {
+      this.editor.notify('error', `Не удалось подключить файлы: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   private update(s: EditorState): void {
     const assets = s.project.assets;
     if (assets !== this.lastAssets || s.media !== this.lastMedia) {
@@ -66,14 +78,16 @@ export class MediaPool {
     }
     const missing = [...s.media.values()].filter((m) => m !== 'online').length;
     const needsPermission = [...s.media.values()].some((m) => m === 'needs-permission');
+    const canPickFolder = typeof window.showDirectoryPicker === 'function';
     this.banner.style.display = missing ? '' : 'none';
     this.banner.replaceChildren(
-      h('span', {}, `Нет доступа к файлам: ${missing}. Монтаж сохранён, но превью и рендер этих клипов недоступны.`),
+      h('span', {}, `Не найдено исходников: ${missing}. Монтаж цел, но превью и рендер этих клипов недоступны, пока файлы не подключены.`),
       h(
         'div',
         {},
         needsPermission ? h('button', { onclick: () => this.editor.regrantAccess() }, 'Разрешить доступ') : null,
-        h('button', { onclick: () => this.import(), title: 'Выберите те же файлы — они подключатся по имени и размеру' }, 'Найти файлы…'),
+        h('button', { onclick: () => void this.relink(pickVideoFiles), title: 'Выберите те же файлы — они подключатся по имени и размеру' }, 'Найти файлы…'),
+        canPickFolder && h('button', { onclick: () => void this.relink(pickFolderVideos), title: 'Исходники найдутся в папке и вложенных папках по имени и размеру' }, 'Указать папку…'),
       ),
     );
   }

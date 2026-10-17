@@ -87,7 +87,7 @@ input[type=text], select {
 .pool-item .remove { opacity: 0; background: transparent; border: none; color: var(--muted); padding: 2px 6px; }
 .pool-item:hover .remove { opacity: 1; }
 .pool-banner { margin: 6px; padding: 8px; border-radius: var(--radius); background: #3a1f1f; color: #ffb3ad; display: flex; flex-direction: column; gap: 6px; }
-.pool-banner div { display: flex; gap: 6px; }
+.pool-banner div { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Вьюер */
 .viewer { display: grid; grid-template-rows: 1fr 40px; min-height: 0; min-width: 0; background: #0c0c0d; }
@@ -149,3 +149,27 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 }
 .tl-toolbar { overflow: hidden; }
 .tl-toolbar select { max-width: 130px; }
+
+/* Меню проекта */
+.topbar { position: relative; }
+.menu-button { background: transparent; border-color: transparent; }
+.menu-button:hover { border-color: var(--line-2); }
+.menu { position: absolute; top: 32px; left: 110px; z-index: 60; min-width: 260px; background: #2c2c31; border: 1px solid var(--line-2); border-radius: 6px; padding: 4px; box-shadow: 0 10px 30px #000a; display: flex; flex-direction: column; }
+.menu-item { display: flex; justify-content: space-between; gap: 20px; background: transparent; border: none; text-align: left; padding: 6px 10px; border-radius: 4px; overflow: hidden; }
+.menu-item span { overflow: hidden; text-overflow: ellipsis; }
+.menu-item:hover { background: var(--accent); color: #111; }
+.menu-item:hover kbd { color: #111; border-color: #0005; }
+.menu-sep { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 8px 10px 4px; border-top: 1px solid var(--line-2); margin-top: 4px; }
+
+.save-state { background: transparent; border-color: transparent; color: var(--muted); min-width: 120px; text-align: right; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.save-state:hover { border-color: var(--line-2); }
+.save-state.saved { color: var(--ok); }
+.save-state.none, .save-state.needs-permission { color: #f0b46c; }
+.save-state.error { color: var(--danger); }
+
+/* Диалог */
+.dialog-overlay { position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center; z-index: 100; }
+.dialog { background: #2c2c31; border: 1px solid var(--line-2); border-radius: 8px; padding: 18px 20px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 20px 60px #000c; }
+.dialog-title { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+.dialog-text { color: var(--text); margin-bottom: 18px; line-height: 1.5; }
+.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }

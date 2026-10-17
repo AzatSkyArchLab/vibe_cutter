@@ -4,7 +4,8 @@ import { PlaybackController } from './application/playback';
 import { probeMedia } from './engine/probe';
 import { BrowserPreview } from './engine/preview';
 import { WorkerRenderEngine } from './engine/render-client';
-import { IdbProjectRepository } from './infrastructure/idb-repository';
+import { FsProjectFiles } from './infrastructure/file-access';
+import { IdbMediaLibrary, IdbProjectRepository, IdbRecentProjects } from './infrastructure/idb';
 import { mountApp } from './ui/app';
 import { Viewer } from './ui/viewer';
 
@@ -17,7 +18,7 @@ async function main() {
     return;
   }
 
-  const editor = new Editor({ probe: probeMedia }, new IdbProjectRepository());
+  const editor = new Editor({ probe: probeMedia }, new IdbProjectRepository(), new FsProjectFiles(), new IdbMediaLibrary(), new IdbRecentProjects());
   const canvas = document.createElement('canvas');
   const preview = new BrowserPreview(canvas);
   const playback = new PlaybackController(editor, preview);

@@ -56,13 +56,48 @@ export function changeSettings(p: Project, settings: TimelineSettings): Project 
 
 export const serializeProject = (p: Project): string => JSON.stringify(p);
 
-export function parseProject(json: string): Project {
-  const p = JSON.parse(json) as Project;
-  if (p?.version !== 1 || !p.timeline || !Array.isArray(p.assets)) throw new Error('Файл не похож на проект vibe_cutter');
+/** Расширение файла проекта на диске. */
+export const PROJECT_EXT = '.vcut';
+const FILE_FORMAT = 'vibe_cutter-project';
+
+/**
+ * Файл проекта: монтаж, настройки и описание исходников (имя, размер,
+ * параметры). Само видео в файл не входит — как .drp в Resolve.
+ * Поле format отличает наш файл от случайного JSON.
+ */
+export function serializeProjectFile(p: Project, savedAt = Date.now()): string {
+  return JSON.stringify({ format: FILE_FORMAT, version: 1, savedAt: new Date(savedAt).toISOString(), project: p }, null, 1);
+}
+
+/** Читает файл проекта (а также сырой проект из автосохранения) с полной проверкой. */
+export function parseProjectFile(text: string): Project {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('Файл не похож на проект vibe_cutter');
+  }
+  const wrapped = data as { format?: string; version?: number; project?: unknown };
+  if (wrapped?.format === FILE_FORMAT) {
+    if (wrapped.version !== 1) throw new Error('Проект сохранён более новой версией vibe_cutter');
+    return validateProject(wrapped.project);
+  }
+  return validateProject(data);
+}
+
+export const parseProject = (json: string): Project => parseProjectFile(json);
+
+function validateProject(data: unknown): Project {
+  const p = data as Project;
+  if (p?.version !== 1 || !p.timeline || !Array.isArray(p.timeline.tracks) || !Array.isArray(p.assets) || !p.settings)
+    throw new Error('Файл не похож на проект vibe_cutter');
   const errors = validateTimeline(p.timeline);
   if (errors.length) throw new Error(`Проект повреждён: ${errors.slice(0, 3).join('; ')}`);
   const known = new Set(p.assets.map((a) => a.id));
   for (const t of p.timeline.tracks)
-    for (const c of t.clips) if (!known.has(c.assetId)) throw new Error(`Проект повреждён: клип ссылается на неизвестный файл`);
+    for (const c of t.clips) if (!known.has(c.assetId)) throw new Error('Проект повреждён: клип ссылается на неизвестный файл');
   return p;
 }
+
+/** Имя проекта по имени файла: «Влог 12.vcut» → «Влог 12». */
+export const nameFromFile = (fileName: string): string => fileName.replace(/\.vcut$/i, '').trim() || 'Без названия';

@@ -2,7 +2,8 @@ import type { Editor, EditorState } from '../application/editor';
 import type { PlaybackController } from '../application/playback';
 import type { RenderEngine } from '../application/ports';
 import { RESOLUTIONS, type FitMode } from '../domain/project';
-import { filesFromDrop } from '../infrastructure/file-access';
+import { filesFromDrop, projectFileFromDrop } from '../infrastructure/file-access';
+import { ProjectMenu } from './project-menu';
 import { DeliverPage } from './deliver-page';
 import { h, setText } from './dom';
 import { formatFps } from './format';
@@ -78,7 +79,7 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
     onchange: () => editor.rename(nameInput.value),
     onkeydown: (e: KeyboardEvent) => e.key === 'Enter' && nameInput.blur(),
   });
-  const saveState = h('div', { class: 'save-state' }, 'Автосохранение');
+  const projectMenu = new ProjectMenu(editor, playback);
   const editTab = h('button', { onclick: () => editor.setPage('edit') }, 'Монтаж');
   const deliverTab = h('button', { onclick: () => (playback.stop(), editor.setPage('deliver')) }, 'Рендер');
   const toasts = h('div', { class: 'toasts' });
@@ -88,7 +89,7 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
     h(
       'div',
       { class: 'app' },
-      h('div', { class: 'topbar' }, h('div', { class: 'logo' }, 'vibe', h('span', {}, '_'), 'cutter'), nameInput, saveState),
+      h('div', { class: 'topbar' }, h('div', { class: 'logo' }, 'vibe', h('span', {}, '_'), 'cutter'), projectMenu.button, nameInput, projectMenu.status),
       h('div', { style: 'display:grid;min-height:0' }, editPage, deliver.el),
       h('div', { class: 'pagebar' }, editTab, deliverTab),
     ),
@@ -96,7 +97,11 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
     dropOverlay,
   );
 
-  installShortcuts(editor, playback, timeline, { importMedia: () => void pool.import() });
+  installShortcuts(editor, playback, timeline, {
+    importMedia: () => void pool.import(),
+    save: (as) => void projectMenu.save(as),
+    open: () => void projectMenu.open(),
+  });
 
   // Уведомления
   editor.onNotice((n) => {
@@ -116,10 +121,16 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
     e.preventDefault();
     dragDepth = 0;
     dropOverlay.classList.remove('on');
-    void filesFromDrop(e).then((files) => {
+    // Файл проекта открывается, видео — импортируются. Ручки забираем синхронно, до первого await.
+    const projectFile = projectFileFromDrop(e);
+    const videos = filesFromDrop(e);
+    void (async () => {
+      const pf = await projectFile;
+      if (pf) return projectMenu.openDropped(pf.file, pf.handle);
+      const files = await videos;
       if (files.length) void editor.importFiles(files);
-      else editor.notify('error', 'Среди перетащенных файлов нет видео');
-    });
+      else editor.notify('error', 'Среди перетащенных файлов нет видео или проекта .vcut');
+    })();
   });
 
   window.addEventListener('beforeunload', (e) => {
@@ -151,5 +162,4 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
   };
   editor.subscribe(update);
   update(editor.state);
-  void saveState;
 }

@@ -23,9 +23,15 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: 'N', label: 'Привязка' },
   { keys: '⌘= / ⌘- / ⇧Z', label: 'Масштаб / по размеру' },
   { keys: '⌘Z / ⇧⌘Z', label: 'Отменить / вернуть' },
+  { keys: '⌘S / ⇧⌘S / ⌘O', label: 'Сохранить / сохранить как / открыть проект' },
 ];
 
-export function installShortcuts(editor: Editor, playback: PlaybackController, timeline: TimelineView, extra: { importMedia: () => void }): void {
+export function installShortcuts(
+  editor: Editor,
+  playback: PlaybackController,
+  timeline: TimelineView,
+  extra: { importMedia: () => void; save: (as: boolean) => void; open: () => void },
+): void {
   window.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -43,7 +49,8 @@ export function installShortcuts(editor: Editor, playback: PlaybackController, t
         if (code === 'Equal') return () => timeline.zoomBy(1.5);
         if (code === 'Minus') return () => timeline.zoomBy(1 / 1.5);
         if (code === 'KeyI') return extra.importMedia;
-        if (code === 'KeyS') return () => void editor.saveNow().then(() => editor.notify('info', 'Проект сохранён'));
+        if (code === 'KeyS') return () => extra.save(e.shiftKey);
+        if (code === 'KeyO') return extra.open;
         return null;
       }
       if (e.altKey && code === 'KeyX') return () => editor.clearMarks();
