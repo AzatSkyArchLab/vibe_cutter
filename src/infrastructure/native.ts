@@ -16,7 +16,8 @@ export interface VibeNative {
 
 export const native: VibeNative | undefined = (window as unknown as { vibeNative?: VibeNative }).vibeNative;
 
-const baseName = (p: string) => p.split('/').pop() ?? p;
+/** Имя файла из пути macOS (/) или Windows (\\). */
+const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 /**
  * Файлы проекта в приложении для Mac: обычные диалоги macOS и запись по пути.

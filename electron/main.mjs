@@ -8,6 +8,7 @@ const DIST = path.join(import.meta.dirname, '..', 'dist');
 const REPO = 'AzatSkyArchLab/vibe_cutter';
 const PROJECT_EXT = '.vcut';
 const SELFTEST = process.env.VIBE_SELFTEST === '1';
+const MAC = process.platform === 'darwin';
 
 // Свой защищённый адрес app://vibe/: модульный воркер рендера, IndexedDB и
 // File System Access работают как на https-сайте (с file:// они ломаются).
@@ -30,8 +31,10 @@ const MIME = {
 
 /** @type {BrowserWindow | null} */
 let win = null;
-/** Файлы проекта, открытые до готовности окна (двойной щелчок в Finder). */
+/** Файлы проекта, открытые до готовности окна (двойной щелчок в Finder / Проводнике). */
 const pendingOpen = [];
+// Windows: файл, по которому дважды щёлкнули, приходит аргументом запуска.
+if (!MAC) for (const a of process.argv.slice(1)) if (a.toLowerCase().endsWith(PROJECT_EXT)) pendingOpen.push(a);
 let rendererReady = false;
 
 if (!SELFTEST && !app.requestSingleInstanceLock()) app.quit();
@@ -114,6 +117,8 @@ function createWindow() {
   win.once('ready-to-show', () => {
     if (!SELFTEST) win.show();
   });
+  // Ctrl/⌘ + колесо — масштаб таймлайна, а не всей страницы.
+  void win.webContents.setVisualZoomLevelLimits(1, 1);
   win.on('closed', () => (win = null));
 
   // Внешние ссылки — в обычный браузер; уход со страницы приложения запрещён.
@@ -204,58 +209,78 @@ function assertProjectPath(file) {
 
 function buildMenu() {
   const send = (action) => () => win?.webContents.send('menu', action);
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: 'vibe_cutter',
-        submenu: [
-          { role: 'about', label: 'О vibe_cutter' },
-          { label: 'Проверить обновления…', click: () => void checkForUpdates(true) },
-          { type: 'separator' },
-          { role: 'hide', label: 'Скрыть vibe_cutter' },
-          { role: 'hideOthers', label: 'Скрыть остальные' },
-          { type: 'separator' },
-          { role: 'quit', label: 'Завершить vibe_cutter' },
-        ],
-      },
-      {
-        label: 'Файл',
-        submenu: [
-          { label: 'Новый проект', click: send('new') },
-          { label: 'Открыть…', accelerator: 'CmdOrCtrl+O', click: send('open') },
-          { role: 'recentDocuments', label: 'Недавние', submenu: [{ role: 'clearRecentDocuments', label: 'Очистить' }] },
-          { type: 'separator' },
-          { label: 'Сохранить', accelerator: 'CmdOrCtrl+S', click: send('save') },
-          { label: 'Сохранить как…', accelerator: 'Shift+CmdOrCtrl+S', click: send('save-as') },
-          { type: 'separator' },
-          { label: 'Импорт видео…', accelerator: 'CmdOrCtrl+I', click: send('import') },
-        ],
-      },
-      {
-        label: 'Правка',
-        submenu: [
-          // Отмена решается на странице: в поле ввода — текст, иначе — монтаж.
-          { label: 'Отменить', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
-          { label: 'Вернуть', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
-          { type: 'separator' },
-          { role: 'cut', label: 'Вырезать' },
-          { role: 'copy', label: 'Копировать' },
-          { role: 'paste', label: 'Вставить' },
-          { role: 'selectAll', label: 'Выбрать всё' },
-        ],
-      },
-      {
-        label: 'Вид',
-        submenu: [
-          { role: 'togglefullscreen', label: 'Полный экран' },
-          { type: 'separator' },
-          { role: 'reload', label: 'Перезагрузить' },
-          { role: 'toggleDevTools', label: 'Инструменты разработчика' },
-        ],
-      },
-      { role: 'windowMenu', label: 'Окно' },
-    ]),
-  );
+  const file = {
+    label: 'Файл',
+    submenu: [
+      { label: 'Новый проект', click: send('new') },
+      { label: 'Открыть…', accelerator: 'CmdOrCtrl+O', click: send('open') },
+      ...(MAC ? [{ role: 'recentDocuments', label: 'Недавние', submenu: [{ role: 'clearRecentDocuments', label: 'Очистить' }] }] : []),
+      { type: 'separator' },
+      { label: 'Сохранить', accelerator: 'CmdOrCtrl+S', click: send('save') },
+      { label: 'Сохранить как…', accelerator: 'Shift+CmdOrCtrl+S', click: send('save-as') },
+      { type: 'separator' },
+      { label: 'Импорт видео…', accelerator: 'CmdOrCtrl+I', click: send('import') },
+      ...(MAC ? [] : [{ type: 'separator' }, { role: 'quit', label: 'Выход' }]),
+    ],
+  };
+  const edit = {
+    label: 'Правка',
+    submenu: [
+      // Отмена решается на странице: в поле ввода — текст, иначе — монтаж.
+      { label: 'Отменить', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
+      { label: 'Вернуть', accelerator: MAC ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y', click: send('redo') },
+      // На Windows привычны оба сочетания для «Вернуть».
+      ...(MAC ? [] : [{ label: 'Вернуть', accelerator: 'Ctrl+Shift+Z', visible: false, click: send('redo') }]),
+      { type: 'separator' },
+      { role: 'cut', label: 'Вырезать' },
+      { role: 'copy', label: 'Копировать' },
+      { role: 'paste', label: 'Вставить' },
+      { role: 'selectAll', label: 'Выбрать всё' },
+    ],
+  };
+  const view = {
+    label: 'Вид',
+    submenu: [
+      { role: 'togglefullscreen', label: 'Полный экран' },
+      { type: 'separator' },
+      { role: 'reload', label: 'Перезагрузить' },
+      { role: 'toggleDevTools', label: 'Инструменты разработчика' },
+    ],
+  };
+  const about = () =>
+    info(`vibe_cutter ${app.getVersion()}`, 'Видеоредактор: монтаж, титры, рендер под YouTube и Kinescope, сжатие видео.');
+  const template = MAC
+    ? [
+        {
+          label: 'vibe_cutter',
+          submenu: [
+            { role: 'about', label: 'О vibe_cutter' },
+            { label: 'Проверить обновления…', click: () => void checkForUpdates(true) },
+            { type: 'separator' },
+            { role: 'hide', label: 'Скрыть vibe_cutter' },
+            { role: 'hideOthers', label: 'Скрыть остальные' },
+            { type: 'separator' },
+            { role: 'quit', label: 'Завершить vibe_cutter' },
+          ],
+        },
+        file,
+        edit,
+        view,
+        { role: 'windowMenu', label: 'Окно' },
+      ]
+    : [
+        file,
+        edit,
+        view,
+        {
+          label: 'Справка',
+          submenu: [
+            { label: 'Проверить обновления…', click: () => void checkForUpdates(true) },
+            { label: 'О программе', click: () => void about() },
+          ],
+        },
+      ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 // ── Обновления ────────────────────────────────────────────────────────────
@@ -294,7 +319,9 @@ async function checkForUpdates(manual) {
         defaultId: 0,
         cancelId: 1,
         message: `Доступна версия ${latest.replace(/^v/, '')}`,
-        detail: `У вас ${app.getVersion()}. Скачайте установщик и перетащите vibe_cutter в «Программы» поверх старой версии — проекты и настройки сохранятся.`,
+        detail: MAC
+          ? `У вас ${app.getVersion()}. Скачайте .dmg и перетащите vibe_cutter в «Программы» поверх старой версии — проекты и настройки сохранятся.`
+          : `У вас ${app.getVersion()}. Скачайте установщик vibe_cutter-…-setup.exe и запустите его — старая версия обновится, проекты и настройки сохранятся.`,
       });
       if (response === 0) void shell.openExternal(release.html_url);
     } else if (manual) {

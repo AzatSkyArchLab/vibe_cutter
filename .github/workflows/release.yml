@@ -1,15 +1,29 @@
-name: Релиз приложения для Mac
+name: Релиз приложения
 
 on:
   push:
     tags: ['v*']
+  # Ручной запуск — проверочная сборка без публикации.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  mac:
-    runs-on: macos-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            dist: app:dist
+            files: release/*.dmg
+            exe: release/mac-arm64/vibe_cutter.app/Contents/MacOS/vibe_cutter
+          - os: windows-latest
+            dist: app:dist:win
+            files: release/*-setup.exe
+            exe: release/win-unpacked/vibe_cutter.exe
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,18 +32,42 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Версия в теге совпадает с package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
           v=$(node -p "require('./package.json').version")
           [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Тег ${GITHUB_REF_NAME}, а в package.json $v"; exit 1; }
       - run: npm run typecheck
       - run: npm test
-      - run: npm run app:dist
+      - run: npm run ${{ matrix.dist }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Самопроверка собранного приложения
+        run: node scripts/selftest.mjs ${{ matrix.exe }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
       - name: Публикация в Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" release/*.dmg \
+          ls -la out
+          gh release create "${GITHUB_REF_NAME}" out/* -R "${GITHUB_REPOSITORY}" \
             --title "vibe_cutter ${GITHUB_REF_NAME#v}" \
-            --notes "Установка: откройте .dmg и перетащите vibe_cutter в «Программы» (поверх старой версии — проекты сохранятся). Apple Silicon — arm64, Intel — x64. Приложение без подписи Apple: при первом запуске macOS спросит разрешение (Системные настройки → Конфиденциальность и безопасность → «Всё равно открыть»)."
+            --notes-file - <<'NOTES'
+          **Mac:** скачайте `.dmg` (Apple Silicon — `arm64`, Intel — `x64`), откройте и перетащите vibe_cutter в «Программы» — поверх старой версии, проекты сохранятся. Приложение без подписи Apple: при первом запуске откройте «Системные настройки → Конфиденциальность и безопасность» и нажмите «Всё равно открыть».
+
+          **Windows 10/11:** скачайте `vibe_cutter-…-setup.exe` и запустите — установка без прав администратора, ярлык появится на рабочем столе. Приложение без подписи Microsoft: в окне SmartScreen нажмите «Подробнее» → «Выполнить в любом случае». Обновление — запустить установщик новой версии.
+          NOTES

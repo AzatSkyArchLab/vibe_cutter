@@ -1,7 +1,7 @@
 {
   "name": "vibe_cutter",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Видеоредактор в духе DaVinci Resolve: склейка, нарезка, титры, рендер и сжатие",
   "author": "AzatSkyArchLab",
   "type": "module",
@@ -15,7 +15,8 @@
     "app": "vite build && electron .",
     "app:selftest": "vite build && VIBE_SELFTEST=1 electron .",
     "app:install": "node scripts/install-mac.mjs",
-    "app:dist": "vite build && electron-builder --mac dmg --arm64 --x64 --publish never"
+    "app:dist": "vite build && electron-builder --mac dmg --arm64 --x64 --publish never",
+    "app:dist:win": "vite build && electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -63,6 +64,26 @@
         "name": "Проект vibe_cutter",
         "role": "Editor"
       }
-    ]
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "vibe_cutter",
+      "artifactName": "vibe_cutter-${version}-setup.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
