@@ -3,6 +3,8 @@ import type { PlaybackController } from '../application/playback';
 import { randomIds } from '../domain/ids';
 import type { AssetId } from '../domain/media';
 import { findAsset } from '../domain/project';
+import { type TitleTemplate, titleLabel } from '../domain/title';
+import { TITLE_MIME } from './titles-library';
 import { formatTimecode, fpsValue } from '../domain/time';
 import {
   type Clip, type ClipId, type Timeline, type Track, type TrackId,
@@ -412,7 +414,7 @@ export class TimelineView {
 
   private onDragOver(e: DragEvent): void {
     const types = e.dataTransfer?.types ?? [];
-    if (!types.includes(ASSET_MIME)) return;
+    if (!types.includes(ASSET_MIME) && !types.includes(TITLE_MIME)) return;
     e.preventDefault();
     e.dataTransfer!.dropEffect = 'copy';
     const f = this.xToFrame(e.offsetX);
@@ -428,8 +430,18 @@ export class TimelineView {
 
   private onDrop(e: DragEvent): void {
     const id = e.dataTransfer?.getData(ASSET_MIME) as AssetId | undefined;
+    const template = e.dataTransfer?.getData(TITLE_MIME) as TitleTemplate | undefined;
     const frame = this.dropFrame;
     this.setDropFrame(null);
+    if (template && frame !== null) {
+      // Титр — на видеодорожку под курсором, иначе на свободную над видео.
+      e.preventDefault();
+      e.stopPropagation();
+      this.playback.stop();
+      const row = this.rowAt(e.offsetY);
+      this.editor.addTitle(template, frame, row?.track.kind === 'video' ? row.track.id : undefined);
+      return;
+    }
     if (!id || frame === null) return;
     e.preventDefault();
     e.stopPropagation();
@@ -543,9 +555,11 @@ export class TimelineView {
     const y = r.y + 2;
     const hh = r.h - 5;
     const video = r.track.kind === 'video';
-    const asset = findAsset(this.editor.project, c.assetId);
-    const online = this.state.media.get(c.assetId) === 'online';
-    ctx.fillStyle = !online ? '#6b2a2a' : video ? (selected ? '#4a76ab' : '#355a86') : selected ? '#3f8a63' : '#2f6a4c';
+    const asset = c.assetId ? findAsset(this.editor.project, c.assetId) : undefined;
+    const online = !c.assetId || this.state.media.get(c.assetId) === 'online';
+    ctx.fillStyle = c.title
+      ? selected ? '#8a63c7' : '#6a4a9e'
+      : !online ? '#6b2a2a' : video ? (selected ? '#4a76ab' : '#355a86') : selected ? '#3f8a63' : '#2f6a4c';
     roundRect(ctx, x, y, w, hh, 3);
     ctx.fill();
     // Метка связанности и ручки подрезки при наведении
@@ -569,7 +583,8 @@ export class TimelineView {
       ctx.font = '11px system-ui';
       ctx.textBaseline = 'top';
       ctx.textAlign = 'left';
-      ctx.fillText((online ? '' : '⚠ ') + (asset?.name ?? '?'), x + 6, y + 4);
+      const label = c.title ? `T  ${titleLabel(c.title)}` : (online ? '' : '⚠ ') + (asset?.name ?? '?');
+      ctx.fillText(label, x + 6, y + 4);
       if (!video) {
         // Условная «волна» — настоящая форма волны будет позже.
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';

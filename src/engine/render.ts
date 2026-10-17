@@ -98,7 +98,7 @@ export async function renderPlan(
   const mixSpans = mixSpansFor(plan, inputs, outRate);
   const mixer = new Mixer(mixSpans, outRate, totalSamples);
   const encoderDelay = await aacEncoderDelay(outRate, settings.audio.channels, settings.audio.bitrate);
-  const compositor = new Compositor(settings.width, settings.height, plan.fit);
+  const compositor = new Compositor(settings.width, settings.height, plan.fit, rate.num / rate.den);
 
   let frame = 0;
   let lastReport = 0;
@@ -128,11 +128,11 @@ export async function renderPlan(
     }
   };
 
-  const emitFrame = async () => {
+  const emitFrame = async (image: OffscreenCanvas) => {
     if (signal.aborted) throw signal.reason ?? new DOMException('Рендер отменён', 'AbortError');
     const t = framesToSeconds(frame, rate);
     await writeAudioUntil(t + frameDuration + AUDIO_LEAD);
-    const sample = new VideoSample(compositor.canvas, { timestamp: t, duration: frameDuration });
+    const sample = new VideoSample(image, { timestamp: t, duration: frameDuration });
     try {
       await videoSource.add(sample);
     } finally {
@@ -153,7 +153,7 @@ export async function renderPlan(
       const count = span.to - span.from;
       compositor.black();
       if (!span.source) {
-        for (let i = 0; i < count; i++) await emitFrame();
+        for (let i = 0; i < count; i++) await emitFrame(compositor.frame(span.overlays, i));
         continue;
       }
       const asset = assets.get(span.source.assetId)!;
@@ -173,7 +173,7 @@ export async function renderPlan(
             sample.close();
           }
         }
-        await emitFrame();
+        await emitFrame(compositor.frame(span.overlays, emitted));
         emitted++;
       }
       if (emitted !== count) throw new Error(`«${asset.name}»: декодер выдал ${emitted} кадров вместо ${count}`);

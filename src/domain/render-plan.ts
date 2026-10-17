@@ -2,18 +2,32 @@ import type { AssetId, MediaAsset } from './media';
 import type { OutputSettings } from './export-preset';
 import { type FitMode, type Project, findAsset } from './project';
 import { type FrameRate, framesToSeconds } from './time';
-import { type Clip, type ClipId, clipEnd, tracksOfKind } from './timeline';
+import { type ClipId, clipEnd, layersAt, tracksOfKind } from './timeline';
+import type { TitleStyle } from './title';
 
 /**
  * План рендера — плоское описание того, что движок должен сделать.
  * Не зависит от браузера: его же получит нативный движок на Mac.
  */
 
-/** Кадры [from, to) выходного файла берутся подряд из одного исходника или чёрные. */
+/** Титр поверх кадра: `offset` — номер кадра от начала титра в момент `from` куска. */
+export interface TitleOverlay {
+  readonly clipId: ClipId;
+  readonly title: TitleStyle;
+  readonly offset: number;
+  /** Полная длина клипа титра — для расчёта исчезновения. */
+  readonly length: number;
+}
+
+/**
+ * Кадры [from, to) выходного файла: основа берётся подряд из одного исходника
+ * (или чёрный фон), поверх рисуются титры снизу вверх.
+ */
 export interface VideoSpan {
   readonly from: number;
   readonly to: number;
   readonly source: { readonly assetId: AssetId; readonly sourceIn: number } | null;
+  readonly overlays: readonly TitleOverlay[];
 }
 
 /** Звук клипа, который нужно подмешать в [from, to) выходного файла. */
@@ -67,10 +81,10 @@ export function buildRenderPlan(
   const to = Math.min(end, range?.to ?? end);
   if (to <= from) throw new RenderPlanError('Таймлайн пуст — рендерить нечего');
 
-  // Видео: в каждом кадре виден верхний клип. Режем таймлайн по всем границам клипов.
-  const videoTracks = tracksOfKind(tl, 'video');
+  // Видео: композиция кадра (layersAt) постоянна между границами клипов,
+  // поэтому режем таймлайн по всем границам видео- и титр-клипов.
   const cuts = new Set([from, to]);
-  for (const t of videoTracks)
+  for (const t of tracksOfKind(tl, 'video'))
     for (const c of t.clips) {
       if (c.start > from && c.start < to) cuts.add(c.start);
       if (clipEnd(c) > from && clipEnd(c) < to) cuts.add(clipEnd(c));
@@ -80,17 +94,21 @@ export function buildRenderPlan(
   for (let i = 0; i + 1 < bounds.length; i++) {
     const a = bounds[i]!;
     const b = bounds[i + 1]!;
-    let top: Clip | null = null;
-    for (let ti = videoTracks.length - 1; ti >= 0 && !top; ti--)
-      top = videoTracks[ti]!.clips.find((c) => c.start <= a && clipEnd(c) >= b) ?? null;
-    const source = top ? { assetId: top.assetId, sourceIn: top.sourceIn + (a - top.start) } : null;
+    const { base, overlays } = layersAt(tl, a);
+    const source = base?.assetId ? { assetId: base.assetId, sourceIn: base.sourceIn + (a - base.start) } : null;
+    const titles = overlays.map((c) => ({ clipId: c.id, title: c.title!, offset: a - c.start, length: c.length }));
     const prev = video[video.length - 1];
-    const continues =
+    const n = prev ? prev.to - prev.from : 0;
+    const sameSource =
       prev &&
       ((prev.source === null && source === null) ||
-        (prev.source && source && prev.source.assetId === source.assetId && prev.source.sourceIn + (prev.to - prev.from) === source.sourceIn));
-    if (continues) video[video.length - 1] = { ...prev, to: b };
-    else video.push({ from: a, to: b, source });
+        (prev.source && source && prev.source.assetId === source.assetId && prev.source.sourceIn + n === source.sourceIn));
+    const sameTitles =
+      prev &&
+      prev.overlays.length === titles.length &&
+      prev.overlays.every((o, k) => o.clipId === titles[k]!.clipId && o.offset + n === titles[k]!.offset);
+    if (sameSource && sameTitles) video[video.length - 1] = { ...prev, to: b };
+    else video.push({ from: a, to: b, source, overlays: titles });
   }
 
   // Звук: все клипы аудиодорожек, пересекающие диапазон, — их смешает микшер.
@@ -102,7 +120,7 @@ export function buildRenderPlan(
     for (const c of t.clips) {
       const a = Math.max(c.start, from);
       const b = Math.min(clipEnd(c), to);
-      if (b <= a) continue;
+      if (b <= a || !c.assetId) continue;
       const sourceIn = c.sourceIn + (a - c.start);
       const last = audio.length > trackFirst ? audio[audio.length - 1]! : null;
       if (last && last.assetId === c.assetId && last.to === a && last.sourceIn + (last.to - last.from) === sourceIn)

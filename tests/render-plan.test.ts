@@ -32,11 +32,11 @@ describe('план рендера', () => {
     const plan = buildRenderPlan(p, out);
     expect(plan.totalFrames).toBe(300);
     expect(plan.video).toEqual([
-      { from: 0, to: 100, source: { assetId: 'A', sourceIn: 0 } },
-      { from: 100, to: 150, source: null },
-      { from: 150, to: 200, source: { assetId: 'A', sourceIn: 150 } },
-      { from: 200, to: 230, source: { assetId: 'B', sourceIn: 10 } },
-      { from: 230, to: 300, source: { assetId: 'A', sourceIn: 230 } },
+      { from: 0, to: 100, source: { assetId: 'A', sourceIn: 0 }, overlays: [] },
+      { from: 100, to: 150, source: null, overlays: [] },
+      { from: 150, to: 200, source: { assetId: 'A', sourceIn: 150 }, overlays: [] },
+      { from: 200, to: 230, source: { assetId: 'B', sourceIn: 10 }, overlays: [] },
+      { from: 230, to: 300, source: { assetId: 'A', sourceIn: 230 }, overlays: [] },
     ]);
     expect(plan.audio.map((a) => [a.from, a.to, a.sourceIn])).toEqual([[0, 100, 0], [150, 300, 150]]);
   });
@@ -45,14 +45,14 @@ describe('план рендера', () => {
     const p = project(({ tl, ids, v1, a1 }) =>
       splitAt(appendAtEnd(tl, placementsForAsset(tl, A, { video: v1, audio: a1 }), ids).timeline, 100, ids),
     );
-    expect(buildRenderPlan(p, out).video).toEqual([{ from: 0, to: 300, source: { assetId: 'A', sourceIn: 0 } }]);
+    expect(buildRenderPlan(p, out).video).toEqual([{ from: 0, to: 300, source: { assetId: 'A', sourceIn: 0 }, overlays: [] }]);
   });
 
   it('диапазон In/Out сдвигается к нулю', () => {
     const p = project(({ tl, ids, v1, a1 }) => appendAtEnd(tl, placementsForAsset(tl, A, { video: v1, audio: a1 }), ids).timeline);
     const plan = buildRenderPlan(p, out, { from: 30, to: 90 });
     expect(plan.totalFrames).toBe(60);
-    expect(plan.video).toEqual([{ from: 0, to: 60, source: { assetId: 'A', sourceIn: 30 } }]);
+    expect(plan.video).toEqual([{ from: 0, to: 60, source: { assetId: 'A', sourceIn: 30 }, overlays: [] }]);
     expect(plan.audio.map((a) => [a.from, a.to, a.sourceIn])).toEqual([[0, 60, 30]]);
   });
 

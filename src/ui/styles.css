@@ -173,3 +173,38 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 .dialog-title { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 8px; }
 .dialog-text { color: var(--text); margin-bottom: 18px; line-height: 1.5; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Вкладки библиотеки */
+.lib-tabs { display: flex; gap: 2px; }
+.lib-tabs button { background: transparent; border: none; color: var(--muted); padding: 2px 8px; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }
+.lib-tabs button.on { color: #fff; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 0; }
+
+/* Титры */
+.title-item { display: grid; grid-template-columns: 112px 1fr; gap: 8px; align-items: center; padding: 4px; border-radius: var(--radius); cursor: grab; }
+.title-item:hover { background: var(--panel-2); }
+.title-item .name { color: #fff; }
+.title-item .meta { color: var(--muted); font-size: 11px; }
+.title-thumb { width: 112px; height: 63px; border-radius: 3px; display: block; }
+
+/* Инспектор */
+.edit-top.with-inspector { grid-template-columns: 300px 1fr 300px; }
+.inspector { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
+.inspector-body { overflow: auto; flex: 1; }
+.inspector section { padding: 8px 10px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.field { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: center; color: var(--muted); }
+.field-controls { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.field-controls select, .field-controls input[type=text], .field-controls textarea { flex: 1; min-width: 0; }
+.field-controls textarea { background: var(--panel-3); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 4px 6px; resize: vertical; font: inherit; color: var(--text); user-select: text; }
+.field-controls input[type=text] { user-select: text; }
+.field-controls input[type=color] { width: 30px; height: 24px; padding: 0; border: 1px solid var(--line-2); border-radius: 4px; background: none; }
+.field-controls .toggle { padding: 3px 8px; min-width: 28px; }
+.field-controls .num { width: 80px; background: var(--panel-3); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 3px 6px; }
+.range { display: flex; gap: 6px; align-items: center; flex: 1; }
+.range input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.range-value { width: 44px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.inspector .reset { align-self: flex-start; }
+@media (max-width: 1150px) {
+  .edit-top.with-inspector { grid-template-columns: 220px 1fr 260px; }
+}
+
+.pool-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }

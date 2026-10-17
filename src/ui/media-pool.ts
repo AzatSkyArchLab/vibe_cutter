@@ -10,6 +10,7 @@ import { ASSET_MIME } from './timeline-view';
 /** Media Pool: список исходников, импорт, статус доступа к файлам. */
 export class MediaPool {
   readonly el: HTMLElement;
+  readonly importButton: HTMLButtonElement;
   private readonly list: HTMLDivElement;
   private readonly banner: HTMLDivElement;
   private readonly items = new Map<AssetId, HTMLElement>();
@@ -21,13 +22,8 @@ export class MediaPool {
   constructor(private readonly editor: Editor) {
     this.list = h('div', { class: 'pool-list' });
     this.banner = h('div', { class: 'pool-banner', style: 'display:none' });
-    this.el = h(
-      'div',
-      { class: 'pool' },
-      h('div', { class: 'panel-head' }, h('span', { class: 'grow' }, 'Медиа'), h('button', { onclick: () => this.import(), title: 'Импорт видео (⌘I)' }, '+ Импорт')),
-      this.banner,
-      this.list,
-    );
+    this.importButton = h('button', { onclick: () => this.import(), title: 'Импорт видео (⌘I)' }, '+ Импорт');
+    this.el = h('div', { class: 'pool-body' }, this.banner, this.list);
     editor.subscribe((s) => this.update(s));
     this.update(editor.state);
   }

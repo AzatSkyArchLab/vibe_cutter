@@ -1,4 +1,6 @@
 import type { AssetId, MediaAsset } from './media';
+import { sanitizeTitle } from './title';
+import type { Clip } from './timeline';
 import { type FrameRate, fpsValue } from './time';
 import { type Ids, type Timeline, emptyTimeline, validateTimeline } from './timeline';
 
@@ -95,8 +97,15 @@ function validateProject(data: unknown): Project {
   if (errors.length) throw new Error(`Проект повреждён: ${errors.slice(0, 3).join('; ')}`);
   const known = new Set(p.assets.map((a) => a.id));
   for (const t of p.timeline.tracks)
-    for (const c of t.clips) if (!known.has(c.assetId)) throw new Error('Проект повреждён: клип ссылается на неизвестный файл');
-  return p;
+    for (const c of t.clips) if (c.assetId !== null && !known.has(c.assetId)) throw new Error('Проект повреждён: клип ссылается на неизвестный файл');
+  // Оформление титров из файла приводим к допустимым значениям.
+  return {
+    ...p,
+    timeline: {
+      ...p.timeline,
+      tracks: p.timeline.tracks.map((t) => ({ ...t, clips: t.clips.map((c: Clip): Clip => (c.title ? { ...c, title: sanitizeTitle(c.title) } : c)) })),
+    },
+  };
 }
 
 /** Имя проекта по имени файла: «Влог 12.vcut» → «Влог 12». */

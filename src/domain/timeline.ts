@@ -1,4 +1,5 @@
 import type { AssetId, MediaAsset } from './media';
+import type { TitleStyle } from './title';
 import { type FrameRate, secondsToFrames } from './time';
 
 /**
@@ -17,7 +18,10 @@ export type TrackKind = 'video' | 'audio';
 
 export interface Clip {
   readonly id: ClipId;
-  readonly assetId: AssetId;
+  /** Исходник клипа; null — у титра (генератора без файла). */
+  readonly assetId: AssetId | null;
+  /** Оформление титра; есть только у клипов без исходника. */
+  readonly title?: TitleStyle;
   /** Позиция на таймлайне, кадры. */
   readonly start: number;
   /** Начало в исходнике, кадры таймлайна от первого кадра файла. */
@@ -134,7 +138,8 @@ export function removeTrack(tl: Timeline, id: TrackId): Timeline {
 /** Клип для размещения: на какой дорожке и откуда из исходника. */
 export interface Placement {
   readonly trackId: TrackId;
-  readonly assetId: AssetId;
+  readonly assetId: AssetId | null;
+  readonly title?: TitleStyle;
   readonly sourceIn: number;
   readonly length: number;
   /** Клипы с одинаковой группой будут связаны между собой. */
@@ -160,6 +165,7 @@ export function overwrite(tl: Timeline, frame: number, items: readonly Placement
     const clip: Clip = {
       id: ids.clip(),
       assetId: item.assetId,
+      ...(item.title ? { title: item.title } : {}),
       start: frame,
       sourceIn: item.sourceIn,
       length: item.length,
@@ -309,11 +315,12 @@ export function trimStart(tl: Timeline, clipId: ClipId, delta: number): Timeline
   let d = delta;
   for (const { track, clip } of group) {
     const prevEnd = Math.max(0, ...track.clips.filter((c) => clipEnd(c) <= clip.start).map(clipEnd));
-    d = Math.max(d, -clip.sourceIn, prevEnd - clip.start);
+    // У титра нет исходника — растягивать влево можно до соседа.
+    d = Math.max(d, clip.title ? -Infinity : -clip.sourceIn, prevEnd - clip.start);
     d = Math.min(d, clip.length - 1);
   }
   if (d === 0) return tl;
-  return updateClips(tl, group, (c) => ({ ...c, start: c.start + d, sourceIn: c.sourceIn + d, length: c.length - d }));
+  return updateClips(tl, group, (c) => ({ ...c, start: c.start + d, sourceIn: c.title ? c.sourceIn : c.sourceIn + d, length: c.length - d }));
 }
 
 /** Подрезка конца клипа на `delta` кадров (положительный — удлинить). */
@@ -322,7 +329,8 @@ export function trimEnd(tl: Timeline, clipId: ClipId, delta: number, assetLength
   let d = delta;
   for (const { track, clip } of group) {
     const nextStart = Math.min(Infinity, ...track.clips.filter((c) => c.start >= clipEnd(clip)).map((c) => c.start));
-    d = Math.min(d, nextStart - clipEnd(clip), assetLength(clip.assetId) - clip.sourceIn - clip.length);
+    const sourceLeft = clip.assetId ? assetLength(clip.assetId) - clip.sourceIn - clip.length : Infinity;
+    d = Math.min(d, nextStart - clipEnd(clip), sourceLeft);
     d = Math.max(d, 1 - clip.length);
   }
   if (d === 0) return tl;
@@ -428,8 +436,36 @@ export function validateTimeline(tl: Timeline): string[] {
       if (c.length <= 0) errors.push(`${c.id}: длина ${c.length}`);
       if (c.start < 0 || c.sourceIn < 0) errors.push(`${c.id}: отрицательная позиция`);
       if (c.start < prevEnd) errors.push(`${c.id}: перекрытие на дорожке ${t.id}`);
+      if ((c.assetId === null) === !c.title) errors.push(`${c.id}: клип должен быть либо файлом, либо титром`);
+      if (c.title && t.kind !== 'video') errors.push(`${c.id}: титр на аудиодорожке`);
       prevEnd = clipEnd(c);
     }
   }
   return errors;
+}
+
+// ── Слои кадра ────────────────────────────────────────────────────────────
+
+export interface FrameLayers {
+  /** Верхний клип с видео — основа кадра (null — чёрный фон). */
+  readonly base: Clip | null;
+  /** Титры над основой, снизу вверх (порядок отрисовки). */
+  readonly overlays: readonly Clip[];
+}
+
+/**
+ * Что видно в кадре: как в Resolve, верхний видеоклип перекрывает всё,
+ * что ниже, а титры на дорожках выше него рисуются поверх.
+ * Единственное место, где решается композиция, — для превью и рендера.
+ */
+export function layersAt(tl: Timeline, frame: number): FrameLayers {
+  const video = tracksOfKind(tl, 'video');
+  const overlays: Clip[] = [];
+  for (let i = video.length - 1; i >= 0; i--) {
+    const clip = clipOnTrackAt(video[i]!, frame);
+    if (!clip) continue;
+    if (clip.title) overlays.push(clip);
+    else return { base: clip, overlays: overlays.reverse() };
+  }
+  return { base: null, overlays: overlays.reverse() };
 }

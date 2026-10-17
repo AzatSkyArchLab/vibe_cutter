@@ -8,6 +8,8 @@ import { DeliverPage } from './deliver-page';
 import { h, setText } from './dom';
 import { formatFps } from './format';
 import { MediaPool } from './media-pool';
+import { TitleInspector } from './title-inspector';
+import { TitlesLibrary } from './titles-library';
 import { SHORTCUTS, installShortcuts } from './shortcuts';
 import { TimelineView } from './timeline-view';
 import { Viewer } from './viewer';
@@ -15,6 +17,24 @@ import { Viewer } from './viewer';
 /** Оболочка: верхняя панель, страницы «Монтаж» и «Рендер», уведомления, перетаскивание файлов. */
 export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackController, viewer: Viewer, renderEngine: RenderEngine): void {
   const pool = new MediaPool(editor);
+  const titles = new TitlesLibrary(editor, playback);
+  const inspector = new TitleInspector(editor);
+  const mediaTab = h('button', { onclick: () => showLib('media') }, 'Медиа');
+  const titlesTab = h('button', { onclick: () => showLib('titles') }, 'Титры');
+  const libBody = h('div', { class: 'pool-body' });
+  const showLib = (tab: 'media' | 'titles') => {
+    mediaTab.classList.toggle('on', tab === 'media');
+    titlesTab.classList.toggle('on', tab === 'titles');
+    pool.importButton.style.visibility = tab === 'media' ? '' : 'hidden';
+    libBody.replaceChildren(tab === 'media' ? pool.el : titles.el);
+  };
+  const library = h(
+    'div',
+    { class: 'pool' },
+    h('div', { class: 'panel-head' }, h('div', { class: 'lib-tabs grow' }, mediaTab, titlesTab), pool.importButton),
+    libBody,
+  );
+  showLib('media');
 
   // Панель инструментов таймлайна
   const toolBtn = (label: string, title: string, fn: () => void) => {
@@ -69,7 +89,8 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
   // Страницы. Вьюер один, переезжает между страницами.
   const viewerSlotEdit = h('div', { style: 'display:grid;min-height:0;min-width:0' });
   const viewerSlotDeliver = h('div', { style: 'display:grid;min-height:0;min-width:0' });
-  const editPage = h('div', { class: 'page edit' }, h('div', { class: 'edit-top' }, pool.el, viewerSlotEdit), timeline.el);
+  const editTop = h('div', { class: 'edit-top' }, library, viewerSlotEdit, inspector.el);
+  const editPage = h('div', { class: 'page edit' }, editTop, timeline.el);
   const deliver = new DeliverPage(editor, renderEngine, viewerSlotDeliver);
 
   const nameInput = h('input', {
@@ -147,6 +168,8 @@ export function mountApp(root: HTMLElement, editor: Editor, playback: PlaybackCo
     deliverTab.classList.toggle('on', !onEdit);
     const slot = onEdit ? viewerSlotEdit : viewerSlotDeliver;
     if (viewer.el.parentElement !== slot) slot.append(viewer.el);
+    editTop.classList.toggle('with-inspector', inspector.visible);
+    inspector.el.style.display = inspector.visible ? '' : 'none';
     selectBtn.classList.toggle('on', s.tool === 'select');
     bladeBtn.classList.toggle('on', s.tool === 'blade');
     snapBtn.classList.toggle('on', s.snapping);

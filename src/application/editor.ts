@@ -4,7 +4,8 @@ import {
   PROJECT_EXT, type Project, type TimelineSettings, changeSettings, findAsset, isTimelineEmpty, nameFromFile, newProject,
   parseProjectFile, serializeProjectFile,
 } from '../domain/project';
-import { type FrameRate, frameRate, sameFrameRate } from '../domain/time';
+import { type FrameRate, fpsValue, frameRate, sameFrameRate } from '../domain/time';
+import { type TitleStyle, type TitleTemplate, defaultTitle, sanitizeTitle } from '../domain/title';
 import {
   type ClipId, type Ids, type Timeline, type TrackId, type TrackKind,
   addTrack, allClips, appendAtEnd, assetLengthInFrames, clipEnd, findClip, insert, lift, overwrite,
@@ -87,6 +88,8 @@ export class Editor {
   private revision = 0;
   /** Версия, записанная в файл проекта. */
   private fileRevision = 0;
+  private lastCoalesce: string | undefined;
+  private lastCommitAt = 0;
   /** Записи в файл идут строго по очереди. */
   private fileWrites: Promise<unknown> = Promise.resolve();
 
@@ -564,6 +567,52 @@ export class Editor {
     }
   }
 
+  // ── Титры ───────────────────────────────────────────────────────────────
+
+  /**
+   * Добавить титр в кадр `at` (по умолчанию под плейхедом) длиной 5 секунд.
+   * Без явной дорожки титр встаёт на первую свободную видеодорожку выше V1;
+   * если такой нет — создаётся новая (как V2 в Resolve).
+   */
+  addTitle(template: TitleTemplate, at = this.s.playhead, trackId?: TrackId): void {
+    const length = Math.max(1, Math.round(fpsValue(this.rate) * 5));
+    this.tryCommit(() => {
+      let tl = this.timeline;
+      let target = trackId ?? null;
+      if (!target) {
+        const video = tracksOfKind(tl, 'video');
+        const empty = allClips(tl).length === 0;
+        const free = (t: (typeof video)[number]) => t.clips.every((c) => clipEnd(c) <= at || c.start >= at + length);
+        const candidates = empty ? video : video.slice(1);
+        target = candidates.find(free)?.id ?? null;
+        if (!target) {
+          tl = addTrack(tl, 'video', this.ids);
+          target = tracksOfKind(tl, 'video').at(-1)!.id;
+        }
+      }
+      const r = overwrite(tl, at, [{ trackId: target, assetId: null, title: defaultTitle(template), sourceIn: 0, length }], this.ids);
+      return { timeline: r.timeline, extra: { selection: r.created } };
+    });
+  }
+
+  /** Изменить оформление титра. Набор текста подряд — один шаг отмены. */
+  updateTitle(clipId: ClipId, patch: Partial<TitleStyle>): void {
+    const ref = findClip(this.timeline, clipId);
+    if (!ref?.clip.title) return;
+    const title = sanitizeTitle({ ...ref.clip.title, ...patch });
+    const timeline: Timeline = {
+      ...this.timeline,
+      tracks: this.timeline.tracks.map((t) => (t.id !== ref.track.id ? t : { ...t, clips: t.clips.map((c) => (c.id === clipId ? { ...c, title } : c)) })),
+    };
+    this.commit({ ...this.s.project, timeline }, {}, `title:${clipId}`);
+  }
+
+  /** Единственный выделенный титр — для инспектора. */
+  selectedTitle(): { id: ClipId; title: TitleStyle } | null {
+    const titles = this.s.selection.map((id) => findClip(this.timeline, id)?.clip).filter((c) => c?.title);
+    return titles.length === 1 ? { id: titles[0]!.id, title: titles[0]!.title! } : null;
+  }
+
   // ── Дорожки ─────────────────────────────────────────────────────────────
 
   addTrack(kind: TrackKind): void {
@@ -667,6 +716,7 @@ export class Editor {
   // ── История ─────────────────────────────────────────────────────────────
 
   undo(): void {
+    this.lastCoalesce = undefined;
     const prev = this.past.pop();
     if (!prev) return;
     this.future.push(this.s.project);
@@ -694,7 +744,11 @@ export class Editor {
     }
   }
 
-  private commit(project: Project, extra: Partial<EditorState> = {}): void {
+  /**
+   * @param coalesce — ключ серии правок (например, набор текста титра):
+   *   правки с тем же ключом подряд в течение пары секунд — один шаг отмены.
+   */
+  private commit(project: Project, extra: Partial<EditorState> = {}, coalesce?: string): void {
     const errors = validateTimeline(project.timeline);
     if (errors.length) {
       // Защитный барьер: ошибка в логике монтажа не должна испортить проект.
@@ -703,9 +757,15 @@ export class Editor {
       return;
     }
     if (project !== this.s.project) {
-      this.past.push(this.s.project);
-      if (this.past.length > HISTORY_LIMIT) this.past.shift();
+      const now = Date.now();
+      const continues = coalesce !== undefined && coalesce === this.lastCoalesce && now - this.lastCommitAt < 2000;
+      if (!continues) {
+        this.past.push(this.s.project);
+        if (this.past.length > HISTORY_LIMIT) this.past.shift();
+      }
       this.future = [];
+      this.lastCoalesce = coalesce;
+      this.lastCommitAt = now;
     }
     this.set({ ...extra, project }, false);
     if (extra.selection === undefined) this.set({ selection: this.validSelection(project) }, false);

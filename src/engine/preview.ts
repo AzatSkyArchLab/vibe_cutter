@@ -1,10 +1,14 @@
+import type { VideoSample } from 'mediabunny';
 import type { MediaRef, PreviewEngine } from '../application/ports';
 import { outputSettings } from '../domain/export-preset';
 import type { AssetId, MediaAsset } from '../domain/media';
 import { type Project, findAsset } from '../domain/project';
 import { buildRenderPlan, videoSourceTime } from '../domain/render-plan';
-import { framesToSeconds } from '../domain/time';
-import { clipEnd, clipOnTrackAt, timelineEnd, tracksOfKind } from '../domain/timeline';
+import { framesToSeconds, fpsValue } from '../domain/time';
+import { clipEnd, layersAt, timelineEnd } from '../domain/timeline';
+import { titleOpacity } from '../domain/title';
+import type { TitleOverlay } from '../domain/render-plan';
+import { drawTitle } from './title-render';
 import { Mixer } from './audio/mixer';
 import { mixSpansFor } from './audio/spans';
 import { MediaInputs } from './media-input';
@@ -92,27 +96,28 @@ export class BrowserPreview implements PreviewEngine {
   private async drawStill(project: Project, frame: number, media: ReadonlyMap<AssetId, MediaRef>): Promise<void> {
     this.fitCanvas(project);
     const tl = project.timeline;
-    const tracks = tracksOfKind(tl, 'video');
-    for (let i = tracks.length - 1; i >= 0; i--) {
-      const clip = clipOnTrackAt(tracks[i]!, frame);
-      if (!clip) continue;
-      const asset = findAsset(project, clip.assetId);
-      if (!asset) break;
-      if (!media.has(asset.id)) return this.drawMessage(`Нет доступа: ${asset.name}`);
-      const sink = await this.inputsFor(media).get(asset.id).videoSamples();
-      const sample = await sink?.getSample(videoSourceTime(asset, clip.sourceIn + (frame - clip.start), tl.frameRate));
-      if (this.pendingFrame) {
-        sample?.close();
-        return; // уже запрошен другой кадр
+    const { base, overlays } = layersAt(tl, frame);
+    let sample: VideoSample | null = null;
+    if (base?.assetId) {
+      const asset = findAsset(project, base.assetId);
+      if (asset && !media.has(asset.id)) return this.drawMessage(`Нет доступа: ${asset.name}`);
+      if (asset) {
+        const sink = await this.inputsFor(media).get(asset.id).videoSamples();
+        sample = (await sink?.getSample(videoSourceTime(asset, base.sourceIn + (frame - base.start), tl.frameRate))) ?? null;
       }
-      this.clear();
-      if (sample) {
-        sample.drawWithFit(this.ctx, { fit: project.settings.fit === 'fill' ? 'cover' : 'contain' });
-        sample.close();
-      }
-      return;
+    }
+    if (this.pendingFrame) {
+      sample?.close();
+      return; // уже запрошен другой кадр
     }
     this.clear();
+    if (sample) {
+      sample.drawWithFit(this.ctx, { fit: project.settings.fit === 'fill' ? 'cover' : 'contain' });
+      sample.close();
+    }
+    const fps = fpsValue(tl.frameRate);
+    for (const c of overlays)
+      drawTitle(this.ctx, this.canvas.width, this.canvas.height, c.title!, titleOpacity(c.title!, frame - c.start, c.length, fps));
   }
 
   private clear(): void {
@@ -140,7 +145,7 @@ export class BrowserPreview implements PreviewEngine {
     if (from >= end) return onEnd();
     for (const t of project.timeline.tracks)
       for (const c of t.clips)
-        if (clipEnd(c) > from && !media.has(c.assetId)) {
+        if (c.assetId && clipEnd(c) > from && !media.has(c.assetId)) {
           const name = findAsset(project, c.assetId)?.name ?? c.assetId;
           return onEnd(new Error(`Нет доступа к файлу «${name}»`));
         }
@@ -273,8 +278,19 @@ class PlaybackSession {
       if (this.stopped) return;
       const count = span.to - span.from;
       if (!span.source) {
-        await this.waitFor(framesToSeconds(span.from, rate));
-        this.black();
+        if (span.overlays.length === 0) {
+          await this.waitFor(framesToSeconds(span.from, rate));
+          this.black();
+          continue;
+        }
+        // Титры на чёрном фоне меняются каждый кадр (появление/исчезновение).
+        for (let i = 0; i < count && !this.stopped; i++) {
+          const at = framesToSeconds(span.from + i, rate);
+          if (this.elapsed() - at > framesToSeconds(1, rate)) continue;
+          await this.waitFor(at);
+          this.black();
+          this.overlays(span.overlays, i);
+        }
         continue;
       }
       const asset = assets.get(span.source.assetId)!;
@@ -300,11 +316,18 @@ class PlaybackSession {
           if (!this.stopped) {
             this.black();
             sample.drawWithFit(this.ctx, { fit });
+            this.overlays(span.overlays, i - 1);
           }
         }
         sample?.close();
       }
     }
+  }
+
+  private overlays(overlays: readonly TitleOverlay[], index: number): void {
+    const fps = fpsValue(this.project.timeline.frameRate);
+    for (const o of overlays)
+      drawTitle(this.ctx, this.ctx.canvas.width, this.ctx.canvas.height, o.title, titleOpacity(o.title, o.offset + index, o.length, fps));
   }
 
   private async waitFor(seconds: number): Promise<void> {
