@@ -9,6 +9,7 @@ import {
   allClips, clipEnd, moveClips, timelineEnd, trackName, tracksOfKind, trimEnd, trimStart,
 } from '../domain/timeline';
 import { h } from './dom';
+import { wheelZoomFactor, zoomAt } from './timeline-zoom';
 
 const RULER_H = 26;
 const HEADER_W = 64;
@@ -138,10 +139,16 @@ export class TimelineView {
     return this.wrap.clientWidth;
   }
 
+  /** Масштаб вокруг точки anchorX: кадр под ней остаётся на месте. */
   setZoom(pxPerFrame: number, anchorX = HEADER_W + (this.width() - HEADER_W) / 2): void {
-    const anchorFrame = this.xToFrameRaw(anchorX);
-    this.pxPerFrame = Math.max(MIN_PX_PER_FRAME, Math.min(MAX_PX_PER_FRAME, pxPerFrame));
-    this.scrollX = Math.max(0, anchorFrame - (anchorX - HEADER_W) / this.pxPerFrame);
+    const v = zoomAt(
+      { pxPerFrame: this.pxPerFrame, scrollX: this.scrollX },
+      pxPerFrame / this.pxPerFrame,
+      anchorX,
+      { min: MIN_PX_PER_FRAME, max: MAX_PX_PER_FRAME, headerW: HEADER_W },
+    );
+    this.pxPerFrame = v.pxPerFrame;
+    this.scrollX = v.scrollX;
     this.invalidate();
   }
 
@@ -164,9 +171,11 @@ export class TimelineView {
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
+    // ⌘ (Mac), Alt (Windows) или Ctrl + колесо — масштаб вокруг курсора.
+    // Щипок на трекпаде браузер присылает как wheel с ctrlKey.
     if (e.ctrlKey || e.metaKey || e.altKey) {
-      // Щипок на трекпаде приходит как wheel с ctrlKey.
-      this.setZoom(this.pxPerFrame * Math.exp(-e.deltaY * 0.01), e.offsetX);
+      // offsetX — та же система координат, что у щелчков и перетаскивания на таймлайне.
+      this.setZoom(this.pxPerFrame * wheelZoomFactor(e), e.offsetX);
       return;
     }
     const contentH = this.rows().reduce((s, r) => s + r.h, 0) + RULER_H;
