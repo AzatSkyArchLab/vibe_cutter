@@ -217,7 +217,7 @@ export class Editor {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = null;
     const ref = this.fileRef;
-    if (ref?.handle && this.revision !== this.fileRevision) {
+    if (ref && this.files.inPlace(ref) && this.revision !== this.fileRevision) {
       if (await this.files.permission(ref, 'readwrite', false).catch(() => false)) await this.writeFile(ref);
       else if (this.fileRef === ref) this.set({ fileState: 'needs-permission' });
     }
@@ -251,7 +251,7 @@ export class Editor {
   async saveToFile(opts: { as?: boolean } = {}): Promise<boolean> {
     let ref = this.fileRef;
     try {
-      if (!ref || opts.as || !ref.handle) {
+      if (!ref || opts.as || !this.files.inPlace(ref)) {
         const picked = await this.files.pickSaveTarget(safeFileName(this.s.project.name) + PROJECT_EXT);
         if (!picked) return false;
         ref = picked;
@@ -273,7 +273,7 @@ export class Editor {
     this.set({ projectFile: ref.name }, false);
     const ok = await this.writeFile(ref);
     if (ok) {
-      if (ref.handle) void this.recent.add(ref).catch(() => {});
+      if (this.files.inPlace(ref)) void this.recent.add(ref).catch(() => {});
       this.sessionDirty = true;
       await this.saveNow();
       this.notify('info', `Проект сохранён: ${ref.name}`);
@@ -333,6 +333,11 @@ export class Editor {
     return this.load(text, ref);
   }
 
+  /** Проект, переданный приложением (двойной щелчок по .vcut в Finder). */
+  openText(text: string, ref: ProjectFileRef): Promise<boolean> {
+    return this.load(text, ref);
+  }
+
   /** Файл проекта, перетащенный в окно. */
   async openDropped(file: File, handle: FileSystemFileHandle | null): Promise<boolean> {
     return this.load(await file.text(), { name: file.name, handle });
@@ -376,7 +381,7 @@ export class Editor {
       false,
     );
     this.refreshMedia();
-    if (ref.handle) void this.recent.add(ref).catch(() => {});
+    if (this.files.inPlace(ref)) void this.recent.add(ref).catch(() => {});
     this.sessionDirty = true;
     await this.saveNow();
     const missing = project.assets.filter((a) => !this.mediaFiles.get(a.id)?.file).length;

@@ -1,0 +1,35 @@
+name: Релиз приложения для Mac
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Версия в теге совпадает с package.json
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Тег ${GITHUB_REF_NAME}, а в package.json $v"; exit 1; }
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run app:dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Публикация в Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/*.dmg \
+            --title "vibe_cutter ${GITHUB_REF_NAME#v}" \
+            --notes "Установка: откройте .dmg и перетащите vibe_cutter в «Программы» (поверх старой версии — проекты сохранятся). Apple Silicon — arm64, Intel — x64. Приложение без подписи Apple: при первом запуске macOS спросит разрешение (Системные настройки → Конфиденциальность и безопасность → «Всё равно открыть»)."

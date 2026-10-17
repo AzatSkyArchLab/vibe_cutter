@@ -3,6 +3,7 @@ import type { PlaybackController } from '../application/playback';
 import type { FileCompressor, MediaProber, RenderEngine } from '../application/ports';
 import { RESOLUTIONS, type FitMode } from '../domain/project';
 import { filesFromDrop, projectFileFromDrop } from '../infrastructure/file-access';
+import { native } from '../infrastructure/native';
 import { ProjectMenu } from './project-menu';
 import { CompressPage } from './compress-page';
 import { DeliverPage } from './deliver-page';
@@ -145,11 +146,49 @@ export function mountApp(
     dropOverlay,
   );
 
-  installShortcuts(editor, playback, timeline, {
-    importMedia: () => void pool.import(),
-    save: (as) => void projectMenu.save(as),
-    open: () => void projectMenu.open(),
-  });
+  installShortcuts(
+    editor,
+    playback,
+    timeline,
+    {
+      importMedia: () => void pool.import(),
+      save: (as) => void projectMenu.save(as),
+      open: () => void projectMenu.open(),
+    },
+    !!native,
+  );
+
+  // Приложение для Mac: меню и открытие проектов из Finder.
+  if (native) {
+    const inText = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+    };
+    native.onMenu((action) => {
+      switch (action) {
+        case 'new':
+          return void projectMenu.newProject();
+        case 'open':
+          return void projectMenu.open();
+        case 'save':
+          return void projectMenu.save(false);
+        case 'save-as':
+          return void projectMenu.save(true);
+        case 'import':
+          return void pool.import();
+        case 'undo':
+          // В поле ввода — отмена набранного текста, иначе — шаг монтажа.
+          if (inText()) document.execCommand('undo');
+          else (playback.stop(), editor.undo());
+          return;
+        case 'redo':
+          if (inText()) document.execCommand('redo');
+          else (playback.stop(), editor.redo());
+          return;
+      }
+    });
+    native.onOpenProject((p) => void projectMenu.openExternal(p.text, { name: p.name, handle: null, path: p.path }));
+  }
 
   // Уведомления
   editor.onNotice((n) => {

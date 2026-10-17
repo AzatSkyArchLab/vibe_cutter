@@ -1,5 +1,6 @@
 import type { Editor, EditorState } from '../application/editor';
 import type { PlaybackController } from '../application/playback';
+import type { ProjectFileRef } from '../application/ports';
 import { ask } from './dialog';
 import { h, setText } from './dom';
 import { mod } from './format';
@@ -42,6 +43,13 @@ export class ProjectMenu {
     if (!(await this.confirmDiscard())) return;
     this.playback.stop();
     this.editor.newProject();
+  }
+
+  /** Проект из Finder (приложение для Mac). */
+  async openExternal(text: string, ref: ProjectFileRef): Promise<void> {
+    if (!(await this.confirmDiscard())) return;
+    this.playback.stop();
+    await this.editor.openText(text, ref);
   }
 
   async openDropped(file: File, handle: FileSystemFileHandle | null): Promise<void> {

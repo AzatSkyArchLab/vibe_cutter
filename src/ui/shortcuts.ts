@@ -31,6 +31,8 @@ export function installShortcuts(
   playback: PlaybackController,
   timeline: TimelineView,
   extra: { importMedia: () => void; save: (as: boolean) => void; open: () => void },
+  /** В приложении для Mac ⌘S/⌘O/⌘Z/⌘I обрабатывает меню — здесь их пропускаем, чтобы не сработали дважды. */
+  menuHandles = false,
 ): void {
   window.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null;
@@ -43,6 +45,7 @@ export function installShortcuts(
 
     const action = ((): (() => void) | null => {
       if (cmd) {
+        if (menuHandles && ['KeyZ', 'KeyS', 'KeyO', 'KeyI'].includes(code)) return null;
         if (code === 'KeyZ') return e.shiftKey ? editing(() => editor.redo()) : editing(() => editor.undo());
         if (code === 'KeyB' || code === 'Backslash') return editing(() => editor.splitAtPlayhead());
         if (code === 'KeyL' && e.shiftKey) return () => editor.toggleLinkedSelection();

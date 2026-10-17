@@ -1,21 +1,68 @@
 {
   "name": "vibe_cutter",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Видеоредактор в духе DaVinci Resolve: склейка, нарезка, титры, рендер и сжатие",
+  "author": "AzatSkyArchLab",
   "type": "module",
+  "main": "electron/main.mjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "mediabunny": "^1.61.6"
+    "test": "vitest run",
+    "icon": "node scripts/make-icon.mjs",
+    "app": "vite build && electron .",
+    "app:selftest": "vite build && VIBE_SELFTEST=1 electron .",
+    "app:install": "node scripts/install-mac.mjs",
+    "app:dist": "vite build && electron-builder --mac dmg --arm64 --x64 --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "mediabunny": "^1.61.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.5"
+  },
+  "build": {
+    "appId": "io.github.azatskyarchlab.vibecutter",
+    "productName": "vibe_cutter",
+    "copyright": "© AzatSkyArchLab",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "ru",
+      "en"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "darkModeSupport": true,
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "title": "vibe_cutter ${version}",
+      "artifactName": "vibe_cutter-${version}-${arch}.${ext}"
+    },
+    "fileAssociations": [
+      {
+        "ext": "vcut",
+        "name": "Проект vibe_cutter",
+        "role": "Editor"
+      }
+    ]
   }
 }

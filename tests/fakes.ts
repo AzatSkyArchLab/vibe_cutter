@@ -33,6 +33,9 @@ export function fakes() {
     async permission(_ref, mode) {
       return mode === 'read' || state.writable;
     },
+    inPlace(ref) {
+      return ref.handle !== null;
+    },
   };
 
   let session: SavedProject | null = null;

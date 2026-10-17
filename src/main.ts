@@ -5,6 +5,7 @@ import { probeMedia } from './engine/probe';
 import { BrowserPreview } from './engine/preview';
 import { WorkerRenderEngine } from './engine/render-client';
 import { FsProjectFiles } from './infrastructure/file-access';
+import { NativeProjectFiles, native } from './infrastructure/native';
 import { IdbMediaLibrary, IdbProjectRepository, IdbRecentProjects } from './infrastructure/idb';
 import { mountApp } from './ui/app';
 import { Viewer } from './ui/viewer';
@@ -19,15 +20,19 @@ async function main() {
   }
 
   const prober = { probe: probeMedia };
-  const editor = new Editor(prober, new IdbProjectRepository(), new FsProjectFiles(), new IdbMediaLibrary(), new IdbRecentProjects());
+  const editor = new Editor(prober, new IdbProjectRepository(), native ? new NativeProjectFiles(native) : new FsProjectFiles(), new IdbMediaLibrary(), new IdbRecentProjects());
   const canvas = document.createElement('canvas');
   const preview = new BrowserPreview(canvas);
   const playback = new PlaybackController(editor, preview);
   const viewer = new Viewer(editor, playback, canvas);
-  mountApp(root, editor, playback, viewer, new WorkerRenderEngine(), prober);
+  const engine = new WorkerRenderEngine();
+  mountApp(root, editor, playback, viewer, engine, prober);
+  if (native) Object.assign(window, { __vibeSelfTest: () => import('./selftest').then((m) => m.selfTest(engine)) });
 
   await editor.restore();
   playback.refresh();
+  // Приложение готово принимать проекты, открытые из Finder.
+  native?.ready();
 
   if (import.meta.env.DEV) {
     Object.assign(window, {

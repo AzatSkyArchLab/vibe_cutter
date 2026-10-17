@@ -110,34 +110,42 @@ export class IdbMediaLibrary implements MediaLibrary {
 
 interface RecentRow {
   name: string;
-  handle: FileSystemFileHandle;
+  handle: FileSystemFileHandle | null;
+  path?: string;
   openedAt: number;
 }
 
 export class IdbRecentProjects implements RecentProjects {
   async list(): Promise<ProjectFileRef[]> {
     const rows = (await get<RecentRow[]>(RECENT, 'list')) ?? [];
-    return rows.map((r) => ({ name: r.name, handle: r.handle }));
+    return rows.map((r) => ({ name: r.name, handle: r.handle ?? null, ...(r.path ? { path: r.path } : {}) }));
   }
 
   async add(ref: ProjectFileRef): Promise<void> {
-    if (!ref.handle) return;
+    if (!ref.handle && !ref.path) return;
     const rows = (await get<RecentRow[]>(RECENT, 'list')) ?? [];
-    const rest = await withoutSame(rows, ref.handle);
-    const next = [{ name: ref.name, handle: ref.handle, openedAt: Date.now() }, ...rest].slice(0, RECENT_LIMIT);
+    const rest = await withoutSame(rows, ref);
+    const row: RecentRow = { name: ref.name, handle: ref.handle, ...(ref.path ? { path: ref.path } : {}), openedAt: Date.now() };
+    const next = [row, ...rest].slice(0, RECENT_LIMIT);
     await tx(RECENT, (s) => s.put(next, 'list'));
   }
 
   async remove(ref: ProjectFileRef): Promise<void> {
-    if (!ref.handle) return;
     const rows = (await get<RecentRow[]>(RECENT, 'list')) ?? [];
-    const next = await withoutSame(rows, ref.handle);
+    const next = await withoutSame(rows, ref);
     await tx(RECENT, (s) => s.put(next, 'list'));
   }
 }
 
-async function withoutSame(rows: RecentRow[], handle: FileSystemFileHandle): Promise<RecentRow[]> {
+async function withoutSame(rows: RecentRow[], ref: ProjectFileRef): Promise<RecentRow[]> {
   const out: RecentRow[] = [];
-  for (const r of rows) if (!(await r.handle.isSameEntry(handle).catch(() => false))) out.push(r);
+  for (const r of rows) {
+    const same = ref.path
+      ? r.path === ref.path
+      : ref.handle && r.handle
+        ? await r.handle.isSameEntry(ref.handle).catch(() => false)
+        : false;
+    if (!same) out.push(r);
+  }
   return out;
 }

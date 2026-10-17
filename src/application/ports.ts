@@ -57,10 +57,14 @@ export interface RenderEngine {
 /** Как найти исходник после перезагрузки страницы. */
 export type MediaHandle = FileSystemFileHandle;
 
-/** Файл проекта на диске. handle = null — браузер без File System Access (сохранение скачиванием). */
+/**
+ * Файл проекта на диске. В браузере — ручка File System Access, в приложении
+ * для Mac — путь. Без того и другого (браузер без API) сохранение — скачиванием.
+ */
 export interface ProjectFileRef {
   readonly name: string;
   readonly handle: FileSystemFileHandle | null;
+  readonly path?: string;
 }
 
 /** Состояние рабочей сессии для восстановления после перезагрузки или сбоя вкладки. */
@@ -90,6 +94,8 @@ export interface ProjectFiles {
   write(ref: ProjectFileRef, text: string): Promise<void>;
   /** Есть ли доступ; ask = true — запросить (только в обработчике действия пользователя). */
   permission(ref: ProjectFileRef, mode: 'read' | 'readwrite', ask: boolean): Promise<boolean>;
+  /** Можно ли перезаписывать этот файл на месте (а не скачивать копию). */
+  inPlace(ref: ProjectFileRef): boolean;
 }
 
 /** Ссылки на исходники по имени и размеру — чтобы открытый проект сам нашёл свои видео. */

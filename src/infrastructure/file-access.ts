@@ -146,6 +146,10 @@ export class FsProjectFiles implements ProjectFiles {
     }
   }
 
+  inPlace(ref: ProjectFileRef): boolean {
+    return ref.handle !== null;
+  }
+
   async permission(ref: ProjectFileRef, mode: 'read' | 'readwrite', ask: boolean): Promise<boolean> {
     if (!ref.handle) return mode === 'read' ? false : true;
     if ((await ref.handle.queryPermission({ mode })) === 'granted') return true;
