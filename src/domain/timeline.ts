@@ -1,5 +1,6 @@
 import type { AssetId, MediaAsset } from './media';
 import type { TitleStyle } from './title';
+import type { AudioFx } from './audio-fx';
 import { type FrameRate, secondsToFrames } from './time';
 
 /**
@@ -22,6 +23,8 @@ export interface Clip {
   readonly assetId: AssetId | null;
   /** Оформление титра; есть только у клипов без исходника. */
   readonly title?: TitleStyle;
+  /** Эффекты звука; есть только у клипов на аудиодорожках. */
+  readonly audioFx?: AudioFx;
   /** Позиция на таймлайне, кадры. */
   readonly start: number;
   /** Начало в исходнике, кадры таймлайна от первого кадра файла. */
@@ -466,6 +469,7 @@ export function validateTimeline(tl: Timeline): string[] {
       if (c.start < prevEnd) errors.push(`${c.id}: перекрытие на дорожке ${t.id}`);
       if ((c.assetId === null) === !c.title) errors.push(`${c.id}: клип должен быть либо файлом, либо титром`);
       if (c.title && t.kind !== 'video') errors.push(`${c.id}: титр на аудиодорожке`);
+      if (c.audioFx && t.kind !== 'audio') errors.push(`${c.id}: звуковые эффекты на видеодорожке`);
       prevEnd = clipEnd(c);
     }
   }

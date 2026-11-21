@@ -83,7 +83,8 @@ export class TitleInspector {
     };
     const row = (label: string, ...fields: Field[]) => {
       this.fields.push(...fields);
-      return h('label', { class: 'field' }, h('span', {}, label), h('div', { class: 'field-controls' }, ...fields.map((f) => f.el)));
+      // div, не label: щелчок по подписи не должен срабатывать на первом элементе строки.
+      return h('div', { class: 'field' }, h('span', {}, label), h('div', { class: 'field-controls' }, ...fields.map((f) => f.el)));
     };
 
     const subtitleRow = row('Вторая строка', text('subtitle', false));

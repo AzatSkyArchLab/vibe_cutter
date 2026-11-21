@@ -20,6 +20,7 @@ export function mixSpansFor(plan: RenderPlan, inputs: MediaInputs<AssetId>, outR
       outStart: frameToSample(plan, span.from, outRate),
       outEnd: frameToSample(plan, span.to, outRate),
       sourceTime,
+      fx: span.fx,
       // Небольшой запас по краям нужен окну ресемплера.
       open: async () => openAudioFeed(await inputs.get(span.assetId).audioSamples(), sourceTime - 0.05, sourceTime + length + 0.05),
     };

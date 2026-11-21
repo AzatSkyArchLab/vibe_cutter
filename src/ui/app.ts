@@ -10,6 +10,7 @@ import { DeliverPage } from './deliver-page';
 import { h, setText } from './dom';
 import { formatFps } from './format';
 import { MediaPool } from './media-pool';
+import { AudioInspector } from './audio-inspector';
 import { TitleInspector } from './title-inspector';
 import { TitlesLibrary } from './titles-library';
 import { SHORTCUTS, installShortcuts } from './shortcuts';
@@ -28,6 +29,7 @@ export function mountApp(
   const pool = new MediaPool(editor);
   const titles = new TitlesLibrary(editor, playback);
   const inspector = new TitleInspector(editor);
+  const audioInspector = new AudioInspector(editor);
   const mediaTab = h('button', { onclick: () => showLib('media') }, 'Медиа');
   const titlesTab = h('button', { onclick: () => showLib('titles') }, 'Титры');
   const libBody = h('div', { class: 'pool-body' });
@@ -98,7 +100,7 @@ export function mountApp(
   // Страницы. Вьюер один, переезжает между страницами.
   const viewerSlotEdit = h('div', { style: 'display:grid;min-height:0;min-width:0' });
   const viewerSlotDeliver = h('div', { style: 'display:grid;min-height:0;min-width:0' });
-  const editTop = h('div', { class: 'edit-top' }, library, viewerSlotEdit, inspector.el);
+  const editTop = h('div', { class: 'edit-top' }, library, viewerSlotEdit, h('div', { class: 'inspector-slot' }, inspector.el, audioInspector.el));
   const editPage = h('div', { class: 'page edit' }, editTop, timeline.el);
   // Страница «Рендер»: таймлайн или сжатие отдельного файла.
   let deliverMode: 'timeline' | 'compress' = 'timeline';
@@ -239,8 +241,9 @@ export function mountApp(
     deliverTab.classList.toggle('on', !onEdit);
     const slot = onEdit ? viewerSlotEdit : viewerSlotDeliver;
     if (viewer.el.parentElement !== slot) slot.append(viewer.el);
-    editTop.classList.toggle('with-inspector', inspector.visible);
+    editTop.classList.toggle('with-inspector', inspector.visible || audioInspector.visible);
     inspector.el.style.display = inspector.visible ? '' : 'none';
+    audioInspector.el.style.display = !inspector.visible && audioInspector.visible ? '' : 'none';
     selectBtn.classList.toggle('on', s.tool === 'select');
     bladeBtn.classList.toggle('on', s.tool === 'blade');
     snapBtn.classList.toggle('on', s.snapping);

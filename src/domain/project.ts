@@ -1,5 +1,6 @@
 import type { AssetId, MediaAsset } from './media';
 import { sanitizeTitle } from './title';
+import { sanitizeFx } from './audio-fx';
 import type { Clip } from './timeline';
 import { type FrameRate, fpsValue } from './time';
 import { type Ids, type Timeline, emptyTimeline, validateTimeline } from './timeline';
@@ -98,12 +99,16 @@ function validateProject(data: unknown): Project {
   const known = new Set(p.assets.map((a) => a.id));
   for (const t of p.timeline.tracks)
     for (const c of t.clips) if (c.assetId !== null && !known.has(c.assetId)) throw new Error('Проект повреждён: клип ссылается на неизвестный файл');
-  // Оформление титров из файла приводим к допустимым значениям.
+  // Оформление титров и эффекты звука из файла приводим к допустимым значениям.
   return {
     ...p,
     timeline: {
       ...p.timeline,
-      tracks: p.timeline.tracks.map((t) => ({ ...t, clips: t.clips.map((c: Clip): Clip => (c.title ? { ...c, title: sanitizeTitle(c.title) } : c)) })),
+      tracks: p.timeline.tracks.map((t) => ({ ...t, clips: t.clips.map((c: Clip): Clip => {
+        let out = c.title ? { ...c, title: sanitizeTitle(c.title) } : c;
+        if (out.audioFx) out = { ...out, audioFx: sanitizeFx(out.audioFx) };
+        return out;
+      }) })),
     },
   };
 }

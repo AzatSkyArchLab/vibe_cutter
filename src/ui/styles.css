@@ -233,3 +233,6 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 .menu-line { height: 1px; background: var(--line-2); margin: 4px 0; }
 
 .pool-item .audio-thumb { display: flex; align-items: center; justify-content: center; background: #1f3a2c; color: #8fd3ad; font-size: 26px; }
+
+.inspector-slot { display: grid; min-height: 0; }
+.inspector-slot > .inspector { min-height: 0; }

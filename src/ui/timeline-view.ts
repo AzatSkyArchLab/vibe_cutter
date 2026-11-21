@@ -4,6 +4,7 @@ import { randomIds } from '../domain/ids';
 import type { AssetId } from '../domain/media';
 import { findAsset } from '../domain/project';
 import { type TitleTemplate, titleLabel } from '../domain/title';
+import { hasFx } from '../domain/audio-fx';
 import { TITLE_MIME } from './titles-library';
 import { formatTimecode, fpsValue } from '../domain/time';
 import {
@@ -641,7 +642,8 @@ export class TimelineView {
       ctx.font = '11px system-ui';
       ctx.textBaseline = 'top';
       ctx.textAlign = 'left';
-      const label = c.title ? `T  ${titleLabel(c.title)}` : (online ? '' : '⚠ ') + (asset?.name ?? '?');
+      const fx = hasFx(c.audioFx) ? `FX  ` : '';
+      const label = c.title ? `T  ${titleLabel(c.title)}` : fx + (online ? '' : '⚠ ') + (asset?.name ?? '?');
       ctx.fillText(label, x + 6, y + 4);
       if (!video) {
         // Условная «волна» — настоящая форма волны будет позже.

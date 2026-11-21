@@ -1,3 +1,5 @@
+import { type AudioFx, fxTailSec, hasFx } from '../../domain/audio-fx';
+import { FxChain } from './effects';
 import { Resampler } from './resampler';
 
 /**
@@ -31,6 +33,8 @@ export interface MixSpan {
   /** Время в исходнике (секунды от нуля файла), соответствующее outStart. */
   readonly sourceTime: number;
   readonly open: () => Promise<SourceFeed>;
+  /** Эффекты клипа; их хвост звучит после outEnd. */
+  readonly fx?: AudioFx | null;
 }
 
 /** Длина плавного входа/выхода на краях куска — убирает щелчки на резах. */
@@ -40,6 +44,11 @@ class ActiveSpan {
   private readonly resamplers: [Resampler, Resampler];
   private written: number;
   private done = false;
+  private feedClosed = false;
+  private readonly chain: FxChain | null;
+  /** Конец звучания: конец клипа плюс хвост эффекта. */
+  private readonly end: number;
+  private tmp: [Float32Array, Float32Array] = [new Float32Array(0), new Float32Array(0)];
 
   constructor(
     readonly span: MixSpan,
@@ -51,31 +60,41 @@ class ActiveSpan {
     const pos = Math.abs(raw - Math.round(raw)) < 1e-6 ? Math.round(raw) : raw;
     this.resamplers = [new Resampler(feed.sampleRate, outRate, pos), new Resampler(feed.sampleRate, outRate, pos)];
     this.written = span.outStart;
+    this.chain = hasFx(span.fx) ? new FxChain(span.fx, outRate) : null;
+    this.end = span.outEnd + Math.round(fxTailSec(span.fx) * outRate);
   }
 
   /** Подмешивает отсчёты куска в block, покрывающий выход [blockStart, blockStart + len). */
-  async mixInto(block: readonly [Float32Array, Float32Array], blockStart: number, scratch: Float32Array): Promise<void> {
+  async mixInto(block: readonly [Float32Array, Float32Array], blockStart: number): Promise<void> {
     const from = Math.max(blockStart, this.written);
-    const to = Math.min(blockStart + block[0].length, this.span.outEnd);
+    const to = Math.min(blockStart + block[0].length, this.end);
     if (to <= from) return;
     const need = to - from;
-    // Подаём вход, пока ресемплер не сможет выдать нужное количество.
+    // Из исходника берём только до конца клипа; дальше тишина, на которой звучит хвост эффекта.
+    const fromSource = Math.max(0, Math.min(to, this.span.outEnd) - from);
+    if (this.tmp[0].length < need) this.tmp = [new Float32Array(need), new Float32Array(need)];
+    const [l, r] = this.tmp;
     for (let ch = 0; ch < OUT_CHANNELS; ch++) {
+      const buf = this.tmp[ch]!;
       let got = 0;
-      while (got < need) {
-        const n = this.resamplers[ch]!.read(scratch, got, need - got);
+      // Подаём вход, пока ресемплер не сможет выдать нужное количество.
+      while (got < fromSource) {
+        const n = this.resamplers[ch]!.read(buf, got, fromSource - got);
         got += n;
-        if (got < need && n === 0) {
+        if (got < fromSource && n === 0) {
           if (!(await this.pull())) continue;
         }
       }
-      const dst = block[ch]!;
-      for (let i = 0; i < need; i++) {
-        const outIndex = from + i;
-        dst[outIndex - blockStart]! += scratch[i]! * this.gain(outIndex);
-      }
+      for (let i = 0; i < fromSource; i++) buf[i] = buf[i]! * this.edgeGain(from + i);
+      buf.fill(0, fromSource, need);
+    }
+    this.chain?.process(l, r, need);
+    for (let i = 0; i < need; i++) {
+      block[0][from - blockStart + i]! += l[i]!;
+      block[1][from - blockStart + i]! += r[i]!;
     }
     this.written = to;
+    if (this.written >= this.span.outEnd) this.closeFeed();
   }
 
   /** Подаёт следующую порцию входа в оба канала; false — входа больше нет. */
@@ -92,7 +111,7 @@ class ActiveSpan {
     return true;
   }
 
-  private gain(outIndex: number): number {
+  private edgeGain(outIndex: number): number {
     const fromStart = outIndex - this.span.outStart;
     const toEnd = this.span.outEnd - 1 - outIndex;
     const edge = Math.min(fromStart, toEnd);
@@ -100,11 +119,17 @@ class ActiveSpan {
   }
 
   get finished(): boolean {
-    return this.written >= this.span.outEnd;
+    return this.written >= this.end;
+  }
+
+  private closeFeed(): void {
+    if (this.feedClosed) return;
+    this.feedClosed = true;
+    this.feed.close();
   }
 
   close(): void {
-    this.feed.close();
+    this.closeFeed();
   }
 }
 
@@ -112,7 +137,6 @@ export class Mixer {
   private readonly pending: MixSpan[];
   private active: ActiveSpan[] = [];
   private position = 0;
-  private scratch = new Float32Array(0);
 
   constructor(
     spans: readonly MixSpan[],
@@ -137,14 +161,13 @@ export class Mixer {
     const start = this.position;
     const len = Math.min(size, this.totalSamples - start);
     const channels: [Float32Array<ArrayBuffer>, Float32Array<ArrayBuffer>] = [new Float32Array(len), new Float32Array(len)];
-    if (this.scratch.length < len) this.scratch = new Float32Array(len);
 
     while (this.pending.length && this.pending[0]!.outStart < start + len) {
       const span = this.pending.shift()!;
       if (span.outEnd <= span.outStart) continue;
       this.active.push(new ActiveSpan(span, await span.open(), this.outRate));
     }
-    for (const a of this.active) await a.mixInto(channels, start, this.scratch);
+    for (const a of this.active) await a.mixInto(channels, start);
     for (const a of this.active.filter((x) => x.finished)) a.close();
     this.active = this.active.filter((x) => !x.finished);
 

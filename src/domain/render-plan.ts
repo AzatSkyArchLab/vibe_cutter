@@ -4,6 +4,7 @@ import { type FitMode, type Project, findAsset } from './project';
 import { type FrameRate, framesToSeconds } from './time';
 import { type ClipId, clipEnd, layersAt, tracksOfKind } from './timeline';
 import type { TitleStyle } from './title';
+import { type AudioFx, hasFx, sameFx } from './audio-fx';
 
 /**
  * План рендера — плоское описание того, что движок должен сделать.
@@ -37,6 +38,8 @@ export interface AudioSpan {
   readonly from: number;
   readonly to: number;
   readonly sourceIn: number;
+  /** Эффекты клипа; null, если обработки нет. */
+  readonly fx: AudioFx | null;
 }
 
 export interface RenderPlan {
@@ -124,10 +127,12 @@ export function buildRenderPlan(
       const b = Math.min(clipEnd(c), to);
       if (b <= a || !c.assetId) continue;
       const sourceIn = c.sourceIn + (a - c.start);
+      const fx = hasFx(c.audioFx) ? c.audioFx : null;
       const last = audio.length > trackFirst ? audio[audio.length - 1]! : null;
-      if (last && last.assetId === c.assetId && last.to === a && last.sourceIn + (last.to - last.from) === sourceIn)
+      // Сливаем только при одинаковых эффектах: иначе реверберация начиналась бы заново на стыке.
+      if (last && last.assetId === c.assetId && last.to === a && last.sourceIn + (last.to - last.from) === sourceIn && sameFx(last.fx, fx))
         audio[audio.length - 1] = { ...last, to: b };
-      else audio.push({ clipId: c.id, assetId: c.assetId, from: a, to: b, sourceIn });
+      else audio.push({ clipId: c.id, assetId: c.assetId, from: a, to: b, sourceIn, fx });
     }
   }
 

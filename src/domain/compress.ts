@@ -177,7 +177,7 @@ export function compressRenderPlan(source: MediaAsset, plan: CompressPlan, video
     totalFrames: frames,
     assets: [source],
     video: [{ from: 0, to: frames, source: { assetId: source.id, sourceIn: 0 }, overlays: [] }],
-    audio: source.audio ? [{ clipId: 'compress' as never, assetId: source.id, from: 0, to: frames, sourceIn: 0 }] : [],
+    audio: source.audio ? [{ clipId: 'compress' as never, assetId: source.id, from: 0, to: frames, sourceIn: 0, fx: null }] : [],
     includeAudio: source.audio !== null,
     warnings: [],
   };

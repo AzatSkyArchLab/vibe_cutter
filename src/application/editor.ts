@@ -6,6 +6,7 @@ import {
 } from '../domain/project';
 import { type FrameRate, fpsValue, frameRate, sameFrameRate } from '../domain/time';
 import { type TitleStyle, type TitleTemplate, defaultTitle, sanitizeTitle } from '../domain/title';
+import { type AudioFx, NO_FX, hasFx, sanitizeFx } from '../domain/audio-fx';
 import {
   type ClipId, type Ids, type Timeline, type TrackId, type TrackKind,
   addTrack, allClips, appendAtEnd, assetLengthInFrames, clipEnd, findClip, insert, lift, overwrite,
@@ -620,6 +621,43 @@ export class Editor {
       tracks: this.timeline.tracks.map((t) => (t.id !== ref.track.id ? t : { ...t, clips: t.clips.map((c) => (c.id === clipId ? { ...c, title } : c)) })),
     };
     this.commit({ ...this.s.project, timeline }, {}, `title:${clipId}`);
+  }
+
+  // ── Эффекты звука ──────────────────────────────────────────────────────
+
+  /** Изменить эффекты звукового клипа. Движение ползунка подряд считается одним шагом отмены. */
+  updateAudioFx(clipId: ClipId, patch: Partial<AudioFx>): void {
+    const ref = findClip(this.timeline, clipId);
+    if (!ref || ref.track.kind !== 'audio') return;
+    const fx = sanitizeFx({ ...(ref.clip.audioFx ?? NO_FX), ...patch });
+    const timeline: Timeline = {
+      ...this.timeline,
+      tracks: this.timeline.tracks.map((t) =>
+        t.id !== ref.track.id
+          ? t
+          : {
+              ...t,
+              clips: t.clips.map((c) => {
+                if (c.id !== clipId) return c;
+                // Без обработки поле не храним: файл проекта остаётся чистым.
+                const { audioFx: _drop, ...rest } = c;
+                return hasFx(fx) ? { ...rest, audioFx: fx } : rest;
+              }),
+            },
+      ),
+    };
+    this.commit({ ...this.s.project, timeline }, {}, `fx:${clipId}:${Object.keys(patch).join(',')}`);
+  }
+
+  /** Единственный выделенный звуковой клип (у связанной пары берётся её звук), для инспектора. */
+  selectedAudioClip(): { id: ClipId; fx: AudioFx; name: string } | null {
+    const audio = this.s.selection
+      .map((id) => findClip(this.timeline, id))
+      .filter((r) => r && r.track.kind === 'audio');
+    if (audio.length !== 1) return null;
+    const clip = audio[0]!.clip;
+    const name = clip.assetId ? (findAsset(this.s.project, clip.assetId)?.name ?? '') : '';
+    return { id: clip.id, fx: clip.audioFx ?? NO_FX, name };
   }
 
   /** Единственный выделенный титр — для инспектора. */
