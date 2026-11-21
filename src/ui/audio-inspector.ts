@@ -1,5 +1,5 @@
 import type { Editor } from '../application/editor';
-import { type AudioFx, GAIN_MAX_DB, GAIN_MIN_DB, NO_FX, REVERB_PRESETS, type ReverbPreset } from '../domain/audio-fx';
+import { type AudioFx, FADE_CURVES, GAIN_MAX_DB, GAIN_MIN_DB, NO_FX, REVERB_PRESETS, type ReverbPreset } from '../domain/audio-fx';
 import type { ClipId } from '../domain/timeline';
 import { h, setText } from './dom';
 
@@ -99,8 +99,39 @@ export class AudioInspector {
     );
     this.sync.push((fx) => (reverbRows.style.display = fx.reverb && fx.reverb.mix > 0 ? '' : 'none'));
 
+    // Появление и затухание: то же, что ручки на клипе, но числами.
+    const fadeControls = (secKey: 'fadeIn' | 'fadeOut', curveKey: 'fadeInCurve' | 'fadeOutCurve') => {
+      const num = h('input', {
+        type: 'number',
+        min: 0,
+        step: 0.1,
+        class: 'num',
+        onchange: () => {
+          const v = Number(num.value);
+          if (v >= 0) set({ [secKey]: v } as Partial<AudioFx>);
+        },
+      });
+      const curve = h(
+        'select',
+        { onchange: () => set({ [curveKey]: curve.value } as Partial<AudioFx>) },
+        ...FADE_CURVES.map((c) => h('option', { value: c.curve }, c.label)),
+      );
+      this.sync.push((fx) => {
+        if (!active(num)) num.value = fx[secKey] ? String(Math.round(fx[secKey] * 100) / 100) : '0';
+        if (!active(curve)) curve.value = fx[curveKey];
+      });
+      return [num, h('span', { class: 'spec' }, 'с'), curve];
+    };
+
     this.body.replaceChildren(
       h('section', {}, row('Громкость', gain, gainReset)),
+      h(
+        'section',
+        {},
+        row('Появление', ...fadeControls('fadeIn', 'fadeInCurve')),
+        row('Затухание', ...fadeControls('fadeOut', 'fadeOutCurve')),
+        h('div', { class: 'spec' }, 'Или тяните ручки в верхних углах клипа и линию громкости на нём.'),
+      ),
       h('section', {}, row('Телефон', phoneToggle, h('span', { class: 'spec' }, 'голос из трубки')), phoneRow),
       h('section', {}, row('Реверберация', reverbToggle), reverbRows),
       h('section', {}, h('button', { class: 'reset', onclick: () => set(NO_FX) }, 'Сбросить эффекты')),

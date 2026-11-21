@@ -73,6 +73,7 @@ describe('эффекты звука', () => {
 
   it('модель: допустимые значения, сравнение, длина хвоста', () => {
     expect(sanitizeFx({ gainDb: 99, phone: 7, reverb: { preset: 'x' as never, mix: -1 } })).toEqual({
+      ...NO_FX,
       gainDb: 12,
       phone: 1,
       reverb: { preset: 'room', mix: 0 },
@@ -113,7 +114,7 @@ describe('микшер с эффектами', () => {
 
   it('хвост реверберации звучит после конца клипа, а без эффекта там тишина', async () => {
     const clipEnd = RATE; // клип 1 с, выход 3 с
-    const wet = await mixAll(new Mixer([{ outStart: 0, outEnd: clipEnd, sourceTime: 0, open: async () => feed(RATE * 2), fx: { gainDb: 0, phone: 0, reverb: { preset: 'hall', mix: 0.5 } } }], RATE, RATE * 3));
+    const wet = await mixAll(new Mixer([{ outStart: 0, outEnd: clipEnd, sourceTime: 0, open: async () => feed(RATE * 2), fx: { ...NO_FX, reverb: { preset: 'hall', mix: 0.5 } } }], RATE, RATE * 3));
     const dry = await mixAll(new Mixer([{ outStart: 0, outEnd: clipEnd, sourceTime: 0, open: async () => feed(RATE * 2) }], RATE, RATE * 3));
     expect(wet.length).toBe(RATE * 3);
     expect(rms(dry, clipEnd + 100, clipEnd + RATE / 2)).toBe(0);
@@ -139,7 +140,7 @@ describe('эффекты в плане и редакторе', () => {
     const s = setup();
     let tl = appendAtEnd(s.tl, placementsForAsset(s.tl, A, { video: s.v1, audio: s.a1 }), s.ids).timeline;
     tl = splitAt(tl, 100, s.ids);
-    const fx = { gainDb: 0, phone: 1, reverb: null };
+    const fx = { ...NO_FX, phone: 1 };
     const both = { ...tl, tracks: tl.tracks.map((t) => (t.kind === 'audio' ? { ...t, clips: t.clips.map((c) => ({ ...c, audioFx: fx })) } : t)) };
     expect(buildRenderPlan(project(both), out).audio.map((a) => [a.from, a.to, a.fx?.phone])).toEqual([[0, 300, 1]]);
     const one = { ...tl, tracks: tl.tracks.map((t) => (t.kind === 'audio' ? { ...t, clips: t.clips.map((c, i) => (i === 1 ? { ...c, audioFx: fx } : c)) } : t)) };
@@ -161,7 +162,7 @@ describe('эффекты в плане и редакторе', () => {
     await editor.saveToFile();
     const saved = parseProjectFile(disk.get('Монтаж.vcut')!);
     const clip = saved.timeline.tracks.find((t) => t.kind === 'audio')!.clips[0]!;
-    expect(clip.audioFx).toEqual({ gainDb: -3, phone: 0.7, reverb: { preset: 'hall', mix: 0.3 } });
+    expect(clip.audioFx).toEqual({ ...NO_FX, gainDb: -3, phone: 0.7, reverb: { preset: 'hall', mix: 0.3 } });
     expect(parseProjectFile(serializeProjectFile(saved))).toEqual(saved);
   });
 

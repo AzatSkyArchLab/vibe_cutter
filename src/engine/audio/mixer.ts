@@ -1,4 +1,4 @@
-import { type AudioFx, fxTailSec, hasFx } from '../../domain/audio-fx';
+import { type AudioFx, fadeEnvelope, fxTailSec, hasFades, hasFx } from '../../domain/audio-fx';
 import { FxChain } from './effects';
 import { Resampler } from './resampler';
 
@@ -35,6 +35,9 @@ export interface MixSpan {
   readonly open: () => Promise<SourceFeed>;
   /** Эффекты клипа; их хвост звучит после outEnd. */
   readonly fx?: AudioFx | null;
+  /** Границы всего клипа в отсчётах выхода: от них считаются появление и затухание. */
+  readonly clipStart?: number;
+  readonly clipEnd?: number;
 }
 
 /** Длина плавного входа/выхода на краях куска — убирает щелчки на резах. */
@@ -53,7 +56,7 @@ class ActiveSpan {
   constructor(
     readonly span: MixSpan,
     private readonly feed: SourceFeed,
-    outRate: number,
+    private readonly outRate: number,
   ) {
     // Целая позиция при совпадающих частотах даёт побитовое копирование.
     const raw = span.sourceTime * feed.sampleRate;
@@ -85,7 +88,7 @@ class ActiveSpan {
           if (!(await this.pull())) continue;
         }
       }
-      for (let i = 0; i < fromSource; i++) buf[i] = buf[i]! * this.edgeGain(from + i);
+      for (let i = 0; i < fromSource; i++) buf[i] = buf[i]! * this.edgeGain(from + i) * this.envelope(from + i);
       buf.fill(0, fromSource, need);
     }
     this.chain?.process(l, r, need);
@@ -109,6 +112,15 @@ class ActiveSpan {
     this.resamplers[0].push(chunk.channels[0], chunk.index);
     this.resamplers[1].push(chunk.channels[1], chunk.index);
     return true;
+  }
+
+  /** Ручки появления и затухания клипа (до эффектов: хвост реверберации затухает естественно). */
+  private envelope(outIndex: number): number {
+    const fx = this.span.fx;
+    if (!fx || !hasFades(fx)) return 1;
+    const start = this.span.clipStart ?? this.span.outStart;
+    const end = this.span.clipEnd ?? this.span.outEnd;
+    return fadeEnvelope(fx, (outIndex - start) / this.outRate, (end - start) / this.outRate);
   }
 
   private edgeGain(outIndex: number): number {

@@ -1,6 +1,6 @@
 import type { AssetId, MediaAsset } from './media';
 import type { TitleStyle } from './title';
-import type { AudioFx } from './audio-fx';
+import { type AudioFx, hasFades, hasFx } from './audio-fx';
 import { type FrameRate, secondsToFrames } from './time';
 
 /**
@@ -266,15 +266,15 @@ export function splitAt(tl: Timeline, frame: number, ids: Ids, trackIds?: readon
         newLinks.set(hit.linkId, rightLink);
       }
       const offset = frame - hit.start;
-      const left: Clip = { ...hit, length: offset };
-      const right: Clip = {
+      const left: Clip = withFxSide({ ...hit, length: offset }, 'left');
+      const right: Clip = withFxSide({
         ...hit,
         id: ids.clip(),
         start: frame,
         sourceIn: hit.sourceIn + offset,
         length: hit.length - offset,
         linkId: rightLink,
-      };
+      }, 'right');
       return { ...track, clips: track.clips.flatMap((c) => (c === hit ? [left, right] : [c])) };
   });
   return tracks.every((t, i) => t === tl.tracks[i]) ? tl : { ...tl, tracks };
@@ -414,11 +414,11 @@ function clearRange(track: Track, from: number, to: number, ids: Ids): Track {
       clips.push(c);
       continue;
     }
-    if (c.start < from) clips.push({ ...c, length: from - c.start });
+    if (c.start < from) clips.push(withFxSide({ ...c, length: from - c.start }, 'left'));
     if (end > to) {
       const cut = to - c.start;
       // Хвост — новый клип; связь с парой теряется, как в Resolve при затирании.
-      clips.push({ ...c, id: c.start < from ? ids.clip() : c.id, start: to, sourceIn: c.sourceIn + cut, length: end - to, linkId: c.start < from ? null : c.linkId });
+      clips.push(withFxSide({ ...c, id: c.start < from ? ids.clip() : c.id, start: to, sourceIn: c.sourceIn + cut, length: end - to, linkId: c.start < from ? null : c.linkId }, 'right'));
     }
   }
   return { ...track, clips };
@@ -500,4 +500,39 @@ export function layersAt(tl: Timeline, frame: number): FrameLayers {
     else return { base: clip, overlays: overlays.reverse() };
   }
   return { base: null, overlays: overlays.reverse() };
+}
+
+// ── Обработка звука клипа ────────────────────────────────────────────────
+
+/**
+ * После разреза левая часть сохраняет появление, правая затухание (как в Vegas):
+ * иначе обе половины получили бы и то и другое.
+ */
+function withFxSide(c: Clip, side: 'left' | 'right'): Clip {
+  if (!c.audioFx || !hasFades(c.audioFx)) return c;
+  const fx = side === 'left' ? { ...c.audioFx, fadeOut: 0 } : { ...c.audioFx, fadeIn: 0 };
+  const { audioFx: _drop, ...rest } = c;
+  return hasFx(fx) ? { ...rest, audioFx: fx } : rest;
+}
+
+/** Задать обработку звукового клипа. Без обработки поле в клипе не хранится. */
+export function setAudioFx(tl: Timeline, clipId: ClipId, fx: AudioFx): Timeline {
+  const ref = findClip(tl, clipId);
+  if (!ref) throw new TimelineError(`Нет клипа ${clipId}`);
+  if (ref.track.kind !== 'audio') throw new TimelineError('Обработка звука задаётся только звуковому клипу');
+  return {
+    ...tl,
+    tracks: tl.tracks.map((t) =>
+      t.id !== ref.track.id
+        ? t
+        : {
+            ...t,
+            clips: t.clips.map((c) => {
+              if (c.id !== clipId) return c;
+              const { audioFx: _drop, ...rest } = c;
+              return hasFx(fx) ? { ...rest, audioFx: fx } : rest;
+            }),
+          },
+    ),
+  };
 }

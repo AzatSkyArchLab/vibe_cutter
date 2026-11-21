@@ -4,7 +4,7 @@ import { type FitMode, type Project, findAsset } from './project';
 import { type FrameRate, framesToSeconds } from './time';
 import { type ClipId, clipEnd, layersAt, tracksOfKind } from './timeline';
 import type { TitleStyle } from './title';
-import { type AudioFx, hasFx, sameFx } from './audio-fx';
+import { type AudioFx, hasFades, hasFx, sameFx } from './audio-fx';
 
 /**
  * План рендера — плоское описание того, что движок должен сделать.
@@ -40,6 +40,9 @@ export interface AudioSpan {
   readonly sourceIn: number;
   /** Эффекты клипа; null, если обработки нет. */
   readonly fx: AudioFx | null;
+  /** Границы всего клипа в кадрах выхода (могут выходить за [from, to)): от них считаются появление и затухание. */
+  readonly clipStart: number;
+  readonly clipEnd: number;
 }
 
 export interface RenderPlan {
@@ -129,16 +132,18 @@ export function buildRenderPlan(
       const sourceIn = c.sourceIn + (a - c.start);
       const fx = hasFx(c.audioFx) ? c.audioFx : null;
       const last = audio.length > trackFirst ? audio[audio.length - 1]! : null;
-      // Сливаем только при одинаковых эффектах: иначе реверберация начиналась бы заново на стыке.
-      if (last && last.assetId === c.assetId && last.to === a && last.sourceIn + (last.to - last.from) === sourceIn && sameFx(last.fx, fx))
-        audio[audio.length - 1] = { ...last, to: b };
-      else audio.push({ clipId: c.id, assetId: c.assetId, from: a, to: b, sourceIn, fx });
+      // Сливаем только при одинаковых эффектах (иначе реверберация начиналась бы заново на стыке)
+      // и без ручек громкости: они считаются от краёв своего клипа.
+      const canMerge = !hasFades(fx) && !(last && hasFades(last.fx));
+      if (last && canMerge && last.assetId === c.assetId && last.to === a && last.sourceIn + (last.to - last.from) === sourceIn && sameFx(last.fx, fx))
+        audio[audio.length - 1] = { ...last, to: b, clipEnd: clipEnd(c) };
+      else audio.push({ clipId: c.id, assetId: c.assetId, from: a, to: b, sourceIn, fx, clipStart: c.start, clipEnd: clipEnd(c) });
     }
   }
 
   // Сдвигаем всё к нулю выходного файла.
   const shiftedVideo = video.map((s) => ({ ...s, from: s.from - from, to: s.to - from }));
-  const shiftedAudio = audio.map((s) => ({ ...s, from: s.from - from, to: s.to - from }));
+  const shiftedAudio = audio.map((s) => ({ ...s, from: s.from - from, to: s.to - from, clipStart: s.clipStart - from, clipEnd: s.clipEnd - from }));
 
   const used = new Set<AssetId>([
     ...shiftedVideo.flatMap((s) => (s.source ? [s.source.assetId] : [])),

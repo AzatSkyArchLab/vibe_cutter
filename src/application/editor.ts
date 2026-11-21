@@ -6,11 +6,11 @@ import {
 } from '../domain/project';
 import { type FrameRate, fpsValue, frameRate, sameFrameRate } from '../domain/time';
 import { type TitleStyle, type TitleTemplate, defaultTitle, sanitizeTitle } from '../domain/title';
-import { type AudioFx, NO_FX, hasFx, sanitizeFx } from '../domain/audio-fx';
+import { type AudioFx, NO_FX, sanitizeFx } from '../domain/audio-fx';
 import {
   type ClipId, type Ids, type Timeline, type TrackId, type TrackKind,
   addTrack, allClips, appendAtEnd, assetLengthInFrames, clipEnd, findClip, insert, lift, overwrite,
-  placementsForAsset, deleteEmptyTracks, deleteTrack, rippleDelete, rippleDeleteRange, splitAt, splitClipsAt, timelineEnd,
+  placementsForAsset, deleteEmptyTracks, deleteTrack, rippleDelete, setAudioFx, rippleDeleteRange, splitAt, splitClipsAt, timelineEnd,
   tracksOfKind, validateTimeline, withLinked,
 } from '../domain/timeline';
 import type { MediaHandle, MediaLibrary, MediaProber, MediaRef, ProjectFileRef, ProjectFiles, ProjectRepository, RecentProjects } from './ports';
@@ -630,23 +630,7 @@ export class Editor {
     const ref = findClip(this.timeline, clipId);
     if (!ref || ref.track.kind !== 'audio') return;
     const fx = sanitizeFx({ ...(ref.clip.audioFx ?? NO_FX), ...patch });
-    const timeline: Timeline = {
-      ...this.timeline,
-      tracks: this.timeline.tracks.map((t) =>
-        t.id !== ref.track.id
-          ? t
-          : {
-              ...t,
-              clips: t.clips.map((c) => {
-                if (c.id !== clipId) return c;
-                // Без обработки поле не храним: файл проекта остаётся чистым.
-                const { audioFx: _drop, ...rest } = c;
-                return hasFx(fx) ? { ...rest, audioFx: fx } : rest;
-              }),
-            },
-      ),
-    };
-    this.commit({ ...this.s.project, timeline }, {}, `fx:${clipId}:${Object.keys(patch).join(',')}`);
+    this.commit({ ...this.s.project, timeline: setAudioFx(this.timeline, clipId, fx) }, {}, `fx:${clipId}:${Object.keys(patch).join(',')}`);
   }
 
   /** Единственный выделенный звуковой клип (у связанной пары берётся её звук), для инспектора. */

@@ -4,22 +4,22 @@ import { randomIds } from '../domain/ids';
 import type { AssetId } from '../domain/media';
 import { findAsset } from '../domain/project';
 import { type TitleTemplate, titleLabel } from '../domain/title';
-import { hasFx } from '../domain/audio-fx';
+import { type AudioFx, FADE_CURVES, GAIN_MAX_DB, GAIN_MIN_DB, NO_FX, fadeGain, hasFades, hasFx, sanitizeFx } from '../domain/audio-fx';
 import { TITLE_MIME } from './titles-library';
 import { formatTimecode, fpsValue } from '../domain/time';
 import {
   type Clip, type ClipId, type Timeline, type Track, type TrackId,
-  allClips, clipEnd, moveClips, timelineEnd, trackName, tracksOfKind, trimEnd, trimStart,
+  allClips, clipEnd, moveClips, setAudioFx, timelineEnd, trackName, tracksOfKind, trimEnd, trimStart,
 } from '../domain/timeline';
 import { filesFromDrop } from '../infrastructure/file-access';
-import { showContextMenu } from './context-menu';
+import { type MenuItem, showContextMenu } from './context-menu';
 import { h } from './dom';
 import { wheelZoomFactor, zoomAt } from './timeline-zoom';
 
 const RULER_H = 26;
 const HEADER_W = 64;
 const VIDEO_H = 56;
-const AUDIO_H = 44;
+const AUDIO_H = 56;
 const EDGE_PX = 7;
 const SNAP_PX = 9;
 const MIN_PX_PER_FRAME = 0.02;
@@ -35,12 +35,16 @@ interface Row {
 
 type Hit =
   | { kind: 'ruler' }
-  | { kind: 'clip'; clip: Clip; track: Track; edge: 'start' | 'end' | null }
+  | { kind: 'clip'; clip: Clip; track: Track; edge: 'start' | 'end' | null; handle?: FxHandle }
   | { kind: 'empty'; track: Track | null }
   | { kind: 'header' };
 
+/** Захваты обработки звука на клипе (как в Vegas): ручки появления/затухания и линия громкости. */
+type FxHandle = 'fadeIn' | 'fadeOut' | 'gain';
+
 type Drag =
   | { kind: 'scrub' }
+  | { kind: 'fx'; handle: FxHandle; clipId: ClipId; base: Timeline; fx: AudioFx; clipStart: number; clipLength: number; top: number; height: number }
   | { kind: 'trim'; edge: 'start' | 'end'; clipId: ClipId; base: Timeline; startFrame: number; edgeFrame: number }
   | {
       kind: 'move';
@@ -77,6 +81,8 @@ export class TimelineView {
   private fitted = false;
   private lastEnd = 0;
   private dropFrame: number | null = null;
+  /** Подсказка рядом с курсором при перетаскивании ручек звука. */
+  private dragLabel: { text: string; x: number; y: number } | null = null;
 
   constructor(
     private readonly editor: Editor,
@@ -247,6 +253,10 @@ export class TimelineView {
         return { kind: 'clip', clip: near, track: row.track, edge: Math.abs(this.frameToX(near.start) - x) <= EDGE_PX ? 'start' : 'end' };
       return { kind: 'empty', track: row.track };
     }
+    if (this.state.tool === 'select' && row.track.kind === 'audio') {
+      const handle = this.fxHandleAt(clip, row, x, y);
+      if (handle) return { kind: 'clip', clip, track: row.track, edge: null, handle };
+    }
     let edge: 'start' | 'end' | null = null;
     const w = clip.length * this.pxPerFrame;
     if (this.state.tool === 'select' && w > EDGE_PX * 3) {
@@ -254,6 +264,39 @@ export class TimelineView {
       else if (this.frameToX(clipEnd(clip)) - x <= EDGE_PX) edge = 'end';
     }
     return { kind: 'clip', clip, track: row.track, edge };
+  }
+
+  // ── Обработка звука на клипе ──────────────────────────────────────────
+
+  /** Положение ручек и линии громкости звукового клипа в пикселях. */
+  private audioGeom(c: Clip, r: Row) {
+    const fx = c.audioFx ?? NO_FX;
+    const fps = fpsValue(this.editor.rate);
+    const x = this.frameToX(c.start);
+    const w = Math.max(1, c.length * this.pxPerFrame);
+    const top = r.y + 2;
+    const height = r.h - 5;
+    const lenSec = c.length / fps;
+    // Появление и затухание длиннее клипа сжимаются так же, как в микшере.
+    const k = fx.fadeIn + fx.fadeOut > lenSec ? lenSec / (fx.fadeIn + fx.fadeOut) : 1;
+    const fadeInPx = fx.fadeIn * k * fps * this.pxPerFrame;
+    const fadeOutPx = fx.fadeOut * k * fps * this.pxPerFrame;
+    const lineY = top + height * (1 - gainToNorm(fx.gainDb));
+    return { fx, x, w, top, height, bottom: top + height, fadeInPx, fadeOutPx, lineY };
+  }
+
+  private fxHandleAt(c: Clip, r: Row, px: number, py: number): FxHandle | null {
+    const g = this.audioGeom(c, r);
+    if (g.w < 24) return null;
+    // Ручки в верхних углах; в самом углу ручка видна и при нулевой длине.
+    if (py - g.top <= 12) {
+      const inX = g.x + Math.max(4, g.fadeInPx);
+      const outX = g.x + g.w - Math.max(4, g.fadeOutPx);
+      if (Math.abs(px - inX) <= 6) return 'fadeIn';
+      if (Math.abs(px - outX) <= 6) return 'fadeOut';
+    }
+    if (Math.abs(py - g.lineY) <= 4 && px > g.x + EDGE_PX && px < g.x + g.w - EDGE_PX) return 'gain';
+    return null;
   }
 
   // ── Привязка ───────────────────────────────────────────────────────────
@@ -296,7 +339,12 @@ export class TimelineView {
     if (e.button !== 0) return;
     const hit = this.hit(e.offsetX, e.offsetY);
     const frame = this.xToFrame(e.offsetX);
-    this.canvas.setPointerCapture(e.pointerId);
+    // Захват указателя желателен (перетаскивание за пределы холста), но его отказ не должен ломать действие.
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* указатель уже отпущен или недоступен для захвата */
+    }
 
     if (hit.kind === 'ruler') {
       this.playback.stop();
@@ -313,6 +361,23 @@ export class TimelineView {
       const snapped = frame + this.snapDelta([frame], new Set(), e.altKey);
       this.snapLine = null;
       this.editor.splitAt(snapped, this.state.linkedSelection ? [hit.clip.id] : [hit.clip.id]);
+      return;
+    }
+    if (hit.handle) {
+      this.editor.select([hit.clip.id]);
+      const row = this.rows().find((r) => r.track.id === hit.track.id)!;
+      const g = this.audioGeom(hit.clip, row);
+      this.drag = {
+        kind: 'fx',
+        handle: hit.handle,
+        clipId: hit.clip.id,
+        base: this.editor.timeline,
+        fx: g.fx,
+        clipStart: hit.clip.start,
+        clipLength: hit.clip.length,
+        top: g.top,
+        height: g.height,
+      };
       return;
     }
     if (hit.edge) {
@@ -353,13 +418,61 @@ export class TimelineView {
     if (!d) {
       const hit = this.hit(e.offsetX, e.offsetY);
       this.hover = hit;
+      const handle = hit.kind === 'clip' ? hit.handle : undefined;
       this.canvas.style.cursor =
-        this.state.tool === 'blade' && hit.kind === 'clip' ? 'crosshair' : hit.kind === 'clip' && hit.edge ? 'ew-resize' : hit.kind === 'ruler' ? 'text' : hit.kind === 'header' ? 'context-menu' : 'default';
-      this.canvas.title = hit.kind === 'header' ? 'Правый щелчок — добавить или удалить дорожку' : '';
+        this.state.tool === 'blade' && hit.kind === 'clip'
+          ? 'crosshair'
+          : handle === 'gain'
+            ? 'ns-resize'
+            : handle || (hit.kind === 'clip' && hit.edge)
+              ? 'ew-resize'
+              : hit.kind === 'ruler'
+                ? 'text'
+                : hit.kind === 'header'
+                  ? 'context-menu'
+                  : 'default';
+      this.canvas.title =
+        hit.kind === 'header'
+          ? 'Правый щелчок: добавить или удалить дорожку'
+          : handle === 'gain'
+            ? 'Потяните: громкость клипа'
+            : handle
+              ? 'Потяните: плавное ' + (handle === 'fadeIn' ? 'появление' : 'затухание') + '. Правый щелчок: форма кривой'
+              : '';
       this.invalidate();
       return;
     }
     if (d.kind === 'scrub') return this.scrubTo(e.offsetX, e.altKey);
+
+    if (d.kind === 'fx') {
+      const fps = fpsValue(this.editor.rate);
+      const lenSec = d.clipLength / fps;
+      let patch: Partial<AudioFx>;
+      if (d.handle === 'gain') {
+        const norm = 1 - (e.offsetY - d.top) / d.height;
+        patch = { gainDb: Math.round(normToGain(norm) * 2) / 2 };
+        this.dragLabel = { text: formatDb(patch.gainDb!), x: e.offsetX, y: e.offsetY };
+      } else {
+        const raw = this.xToFrame(e.offsetX);
+        const frame = raw + this.snapDelta([raw], new Set([d.clipId]), e.altKey);
+        if (d.handle === 'fadeIn') {
+          const sec = Math.max(0, Math.min(lenSec - d.fx.fadeOut, (frame - d.clipStart) / fps));
+          patch = { fadeIn: sec };
+          this.dragLabel = { text: `Появление ${sec.toFixed(2)} с`, x: e.offsetX, y: e.offsetY };
+        } else {
+          const sec = Math.max(0, Math.min(lenSec - d.fx.fadeIn, (d.clipStart + d.clipLength - frame) / fps));
+          patch = { fadeOut: sec };
+          this.dragLabel = { text: `Затухание ${sec.toFixed(2)} с`, x: e.offsetX, y: e.offsetY };
+        }
+      }
+      try {
+        this.preview = setAudioFx(d.base, d.clipId, sanitizeFx({ ...d.fx, ...patch }));
+      } catch {
+        this.preview = null;
+      }
+      this.invalidate();
+      return;
+    }
 
     if (d.kind === 'trim') {
       const raw = this.xToFrame(e.offsetX) - d.startFrame;
@@ -398,13 +511,15 @@ export class TimelineView {
     this.drag = null;
     this.snapLine = null;
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
-    if (d && (d.kind === 'trim' || (d.kind === 'move' && d.active)) && this.preview) this.editor.applyTimeline(this.preview);
+    if (d && (d.kind === 'trim' || d.kind === 'fx' || (d.kind === 'move' && d.active)) && this.preview) this.editor.applyTimeline(this.preview);
+    this.dragLabel = null;
     this.preview = null;
     this.invalidate();
   }
 
   private cancelDrag(): void {
     this.drag = null;
+    this.dragLabel = null;
     this.preview = null;
     this.snapLine = null;
     this.invalidate();
@@ -421,6 +536,8 @@ export class TimelineView {
     e.preventDefault();
     const row = this.rowAt(e.offsetY);
     if (!row || e.offsetY < RULER_H) return;
+    const hit = this.hit(e.offsetX, e.offsetY);
+    if (hit.kind === 'clip' && hit.track.kind === 'audio') return this.audioClipMenu(e, hit.clip);
     const tl = this.editor.timeline;
     const kind = row.track.kind;
     const ofKind = tracksOfKind(tl, kind);
@@ -445,6 +562,24 @@ export class TimelineView {
         disabled: removableEmpty === 0,
         action: () => this.editor.deleteEmptyTracks(kind),
       },
+    ]);
+  }
+
+  /** Меню звукового клипа: форма кривых появления и затухания, сброс громкости. */
+  private audioClipMenu(e: MouseEvent, clip: Clip): void {
+    this.playback.stop();
+    this.editor.select([clip.id]);
+    const fx = clip.audioFx ?? NO_FX;
+    const set = (patch: Partial<AudioFx>) => this.editor.updateAudioFx(clip.id, patch);
+    const curves = (key: 'fadeInCurve' | 'fadeOutCurve', title: string): MenuItem[] =>
+      FADE_CURVES.map((c) => ({ label: `${fx[key] === c.curve ? '✓ ' : '   '}${title}: ${c.label.toLowerCase()}`, action: () => set({ [key]: c.curve }) }));
+    showContextMenu(e.clientX, e.clientY, [
+      ...curves('fadeInCurve', 'Появление'),
+      'separator',
+      ...curves('fadeOutCurve', 'Затухание'),
+      'separator',
+      { label: 'Убрать появление и затухание', disabled: !hasFades(fx), action: () => set({ fadeIn: 0, fadeOut: 0 }) },
+      { label: 'Громкость 0 дБ', disabled: fx.gainDb === 0, action: () => set({ gainDb: 0 }) },
     ]);
   }
 
@@ -599,6 +734,7 @@ export class TimelineView {
       ctx.lineTo(px, RULER_H);
       ctx.fill();
     }
+    this.drawDragLabel();
   }
 
   private vline(x: number, color: string, hgt: number): void {
@@ -621,6 +757,7 @@ export class TimelineView {
       : !online ? '#6b2a2a' : video ? (selected ? '#4a76ab' : '#355a86') : selected ? '#3f8a63' : '#2f6a4c';
     roundRect(ctx, x, y, w, hh, 3);
     ctx.fill();
+    if (!video && !c.title) this.drawAudioFx(c, r, selected);
     // Метка связанности и ручки подрезки при наведении
     const hov = this.hover?.kind === 'clip' && this.hover.clip.id === c.id ? this.hover : null;
     if (hov?.edge) {
@@ -657,6 +794,88 @@ export class TimelineView {
     }
   }
 
+  /** Кривые появления/затухания, линия громкости и ручки поверх звукового клипа. */
+  private drawAudioFx(c: Clip, r: Row, selected: boolean): void {
+    const ctx = this.ctx;
+    const g = this.audioGeom(c, r);
+    if (g.w < 8) return;
+    const hovered = this.hover?.kind === 'clip' && this.hover.clip.id === c.id;
+    const active = this.drag?.kind === 'fx' && this.drag.clipId === c.id;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(g.x, g.top, g.w, g.height);
+    ctx.clip();
+    // Приглушённая область над кривой: здесь звук тише.
+    const curvePoint = (px: number, side: 'in' | 'out') => {
+      const t = side === 'in' ? px / g.fadeInPx : px / g.fadeOutPx;
+      const gain = fadeGain(side === 'in' ? g.fx.fadeInCurve : g.fx.fadeOutCurve, t);
+      return g.bottom - gain * (g.bottom - g.lineY);
+    };
+    ctx.fillStyle = 'rgba(0,0,0,0.38)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1;
+    if (g.fadeInPx > 1) {
+      ctx.beginPath();
+      ctx.moveTo(g.x, g.top);
+      for (let px = 0; px <= g.fadeInPx; px += 2) ctx.lineTo(g.x + px, curvePoint(px, 'in'));
+      ctx.lineTo(g.x + g.fadeInPx, g.lineY);
+      ctx.lineTo(g.x + g.fadeInPx, g.top);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      for (let px = 0; px <= g.fadeInPx; px += 2) ctx.lineTo(g.x + px, curvePoint(px, 'in'));
+      ctx.stroke();
+    }
+    if (g.fadeOutPx > 1) {
+      const end = g.x + g.w;
+      ctx.beginPath();
+      ctx.moveTo(end, g.top);
+      for (let px = 0; px <= g.fadeOutPx; px += 2) ctx.lineTo(end - px, curvePoint(px, 'out'));
+      ctx.lineTo(end - g.fadeOutPx, g.lineY);
+      ctx.lineTo(end - g.fadeOutPx, g.top);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      for (let px = 0; px <= g.fadeOutPx; px += 2) ctx.lineTo(end - px, curvePoint(px, 'out'));
+      ctx.stroke();
+    }
+    // Линия громкости между ручками.
+    ctx.strokeStyle = selected || hovered || active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(g.x + g.fadeInPx, Math.round(g.lineY) + 0.5);
+    ctx.lineTo(g.x + g.w - g.fadeOutPx, Math.round(g.lineY) + 0.5);
+    ctx.stroke();
+    // Ручки в верхних углах.
+    if (selected || hovered || active || hasFades(g.fx)) {
+      ctx.fillStyle = '#f0f0f3';
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      for (const hx of [g.x + Math.max(4, g.fadeInPx), g.x + g.w - Math.max(4, g.fadeOutPx)]) {
+        ctx.beginPath();
+        ctx.rect(Math.round(hx) - 3.5, g.top + 1.5, 7, 7);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  private drawDragLabel(): void {
+    const l = this.dragLabel;
+    if (!l) return;
+    const ctx = this.ctx;
+    ctx.font = '11px system-ui';
+    const w = ctx.measureText(l.text).width + 12;
+    const x = Math.min(l.x + 12, this.width() - w - 4);
+    const y = Math.max(RULER_H + 2, l.y - 26);
+    ctx.fillStyle = 'rgba(20,20,24,0.92)';
+    roundRect(ctx, x, y, w, 20, 4);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(l.text, x + 6, y + 10);
+  }
+
   private drawRuler(w: number): void {
     const ctx = this.ctx;
     ctx.fillStyle = '#2a2a2e';
@@ -688,6 +907,17 @@ export class TimelineView {
     ctx.fillRect(0, 0, HEADER_W, RULER_H);
   }
 }
+
+// Шкала линии громкости: 0 дБ на 65% высоты клипа снизу, вверх до +12 дБ, вниз до −40 дБ.
+const ZERO_DB_NORM = 0.65;
+function gainToNorm(db: number): number {
+  return db >= 0 ? ZERO_DB_NORM + (1 - ZERO_DB_NORM) * (db / GAIN_MAX_DB) : ZERO_DB_NORM * (1 - db / GAIN_MIN_DB);
+}
+function normToGain(norm: number): number {
+  const n = Math.max(0, Math.min(1, norm));
+  return n >= ZERO_DB_NORM ? ((n - ZERO_DB_NORM) / (1 - ZERO_DB_NORM)) * GAIN_MAX_DB : (1 - n / ZERO_DB_NORM) * GAIN_MIN_DB;
+}
+const formatDb = (db: number) => (db === 0 ? '0 дБ' : `${db > 0 ? '+' : ''}${db.toFixed(1)} дБ`);
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.min(r, w / 2, h / 2);
