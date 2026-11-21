@@ -2,7 +2,7 @@ import type { Editor, EditorState } from '../application/editor';
 import type { AssetId, MediaAsset } from '../domain/media';
 import { formatTimecode, secondsToFrames } from '../domain/time';
 import { MediaInput } from '../engine/media-input';
-import { type PickedFile, pickFolderVideos, pickVideoFiles } from '../infrastructure/file-access';
+import { type PickedFile, pickFolderMedia, pickMediaFiles } from '../infrastructure/file-access';
 import { h } from './dom';
 import { formatBytes, formatFps } from './format';
 import { ASSET_MIME } from './timeline-view';
@@ -22,7 +22,7 @@ export class MediaPool {
   constructor(private readonly editor: Editor) {
     this.list = h('div', { class: 'pool-list' });
     this.banner = h('div', { class: 'pool-banner', style: 'display:none' });
-    this.importButton = h('button', { onclick: () => this.import(), title: 'Импорт видео (⌘I)' }, '+ Импорт');
+    this.importButton = h('button', { onclick: () => this.import(), title: 'Импорт видео и звука (⌘I)' }, '+ Импорт');
     this.el = h('div', { class: 'pool-body' }, this.banner, this.list);
     editor.subscribe((s) => this.update(s));
     this.update(editor.state);
@@ -30,7 +30,7 @@ export class MediaPool {
 
   async import(): Promise<void> {
     try {
-      const files = await pickVideoFiles();
+      const files = await pickMediaFiles('media');
       if (files.length) await this.editor.importFiles(files);
     } catch (err) {
       this.editor.notify('error', `Импорт не удался: ${err instanceof Error ? err.message : err}`);
@@ -63,7 +63,7 @@ export class MediaPool {
     this.list.replaceChildren();
     this.items.clear();
     if (s.project.assets.length === 0) {
-      this.list.append(h('div', { class: 'pool-empty' }, 'Перетащите сюда видео', h('br'), 'MP4 и MOV с iPhone, камеры, OBS'));
+      this.list.append(h('div', { class: 'pool-empty' }, 'Перетащите сюда видео и звук', h('br'), 'MP4, MOV с iPhone, камеры, OBS', h('br'), 'MP3, WAV, M4A, FLAC'));
     }
     for (const a of s.project.assets) {
       const status = s.media.get(a.id) ?? 'offline';
@@ -82,19 +82,20 @@ export class MediaPool {
         'div',
         {},
         needsPermission ? h('button', { onclick: () => this.editor.regrantAccess() }, 'Разрешить доступ') : null,
-        h('button', { onclick: () => void this.relink(pickVideoFiles), title: 'Выберите те же файлы — они подключатся по имени и размеру' }, 'Найти файлы…'),
-        canPickFolder && h('button', { onclick: () => void this.relink(pickFolderVideos), title: 'Исходники найдутся в папке и вложенных папках по имени и размеру' }, 'Указать папку…'),
+        h('button', { onclick: () => void this.relink(() => pickMediaFiles('media')), title: 'Выберите те же файлы: они подключатся по имени и размеру' }, 'Найти файлы…'),
+        canPickFolder && h('button', { onclick: () => void this.relink(pickFolderMedia), title: 'Исходники найдутся в папке и вложенных папках по имени и размеру' }, 'Указать папку…'),
       ),
     );
   }
 
   private item(a: MediaAsset, status: string): HTMLElement {
-    const thumb = h('img', { class: 'thumb', alt: '', draggable: false });
+    // У звукового файла вместо кадра значок звука.
+    const thumb = a.video ? h('img', { class: 'thumb', alt: '', draggable: false }) : h('div', { class: 'thumb audio-thumb' }, '♪');
     const cached = this.thumbs.get(a.id);
-    if (cached) thumb.src = cached;
+    if (cached && thumb instanceof HTMLImageElement) thumb.src = cached;
     const v = a.video;
     const meta = [
-      v ? `${v.width}×${v.height}` : 'только звук',
+      v ? `${v.width}×${v.height}` : `звук ${a.audio?.codec ?? ''} · ${a.audio ? Math.round(a.audio.sampleRate / 100) / 10 : '?'} кГц`,
       v ? `${formatFps(v.frameRate.num, v.frameRate.den)} к/с` : null,
       formatTimecode(secondsToFrames(a.duration, this.editor.rate), this.editor.rate),
       formatBytes(a.sizeBytes),

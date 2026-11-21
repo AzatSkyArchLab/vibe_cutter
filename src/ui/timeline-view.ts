@@ -10,6 +10,7 @@ import {
   type Clip, type ClipId, type Timeline, type Track, type TrackId,
   allClips, clipEnd, moveClips, timelineEnd, trackName, tracksOfKind, trimEnd, trimStart,
 } from '../domain/timeline';
+import { filesFromDrop } from '../infrastructure/file-access';
 import { showContextMenu } from './context-menu';
 import { h } from './dom';
 import { wheelZoomFactor, zoomAt } from './timeline-zoom';
@@ -450,7 +451,7 @@ export class TimelineView {
 
   private onDragOver(e: DragEvent): void {
     const types = e.dataTransfer?.types ?? [];
-    if (!types.includes(ASSET_MIME) && !types.includes(TITLE_MIME)) return;
+    if (!types.includes(ASSET_MIME) && !types.includes(TITLE_MIME) && !types.includes('Files')) return;
     e.preventDefault();
     e.dataTransfer!.dropEffect = 'copy';
     const f = this.xToFrame(e.offsetX);
@@ -465,6 +466,27 @@ export class TimelineView {
   }
 
   private onDrop(e: DragEvent): void {
+    // Файлы из Finder: импорт и сразу на таймлайн в точку отпускания, подряд.
+    if (e.dataTransfer?.types.includes('Files') && this.dropFrame !== null) {
+      const frame = this.dropFrame;
+      const targets = this.dropTargets(e.offsetY);
+      this.setDropFrame(null);
+      // Ручки файлов забираются синхронно, до первого await.
+      const files = filesFromDrop(e, 'media');
+      // Окно увидит defaultPrevented и не станет импортировать второй раз.
+      e.preventDefault();
+      this.playback.stop();
+      void files.then(async (picked) => {
+        if (picked.length === 0) return;
+        const ids = await this.editor.importFiles(picked);
+        let at = frame;
+        for (const id of ids) {
+          this.editor.overwriteAsset(id, at, targets);
+          at += this.editor.assetLength(id);
+        }
+      });
+      return;
+    }
     const id = e.dataTransfer?.getData(ASSET_MIME) as AssetId | undefined;
     const template = e.dataTransfer?.getData(TITLE_MIME) as TitleTemplate | undefined;
     const frame = this.dropFrame;

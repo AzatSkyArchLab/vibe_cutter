@@ -5,7 +5,7 @@ import {
 } from '../domain/compress';
 import type { VideoCodecChoice } from '../domain/export-preset';
 import type { AssetId, MediaAsset } from '../domain/media';
-import { downloadBlob, pickRenderTarget, pickVideoFiles } from '../infrastructure/file-access';
+import { downloadBlob, pickMediaFiles, pickRenderTarget } from '../infrastructure/file-access';
 import { h, setText } from './dom';
 import { formatBytes, formatDuration, formatFps } from './format';
 
@@ -89,7 +89,7 @@ export class CompressPage {
   }
 
   private async choose(): Promise<void> {
-    const [picked] = await pickVideoFiles().catch(() => []);
+    const [picked] = await pickMediaFiles('video').catch(() => []);
     if (picked) await this.setFile(picked.file);
   }
 

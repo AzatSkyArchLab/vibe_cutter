@@ -6,9 +6,9 @@ import { MediaInput } from './media-input';
 export async function probeMedia(file: File): Promise<MediaMetadata> {
   const media = new MediaInput(file);
   try {
-    if (!(await media.input.canRead())) throw new Error(`«${file.name}»: формат не поддерживается`);
+    if (!(await media.input.canRead())) throw new Error('формат не поддерживается');
     const [vt, at] = await Promise.all([media.video(), media.audio()]);
-    if (!vt && !at) throw new Error(`«${file.name}»: нет ни видео, ни звука`);
+    if (!vt && !at) throw new Error('в файле нет ни видео, ни звука');
 
     let video: VideoInfo | null = null;
     if (vt) {

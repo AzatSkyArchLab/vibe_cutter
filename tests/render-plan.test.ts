@@ -79,3 +79,20 @@ describe('план рендера: звук', () => {
     expect(buildRenderPlan(p, out).audio.map((a) => [a.from, a.to, a.sourceIn])).toEqual([[0, 300, 0]]);
   });
 });
+
+describe('звуковой файл без видео', () => {
+  const song = asset('S', 4, { video: null, audio: { codec: 'mp3', sampleRate: 44100, channels: 2, decodable: true } });
+
+  it('ложится только на аудиодорожку; в рендере чёрный кадр и звук', () => {
+    const s = setup();
+    const placed = placementsForAsset(s.tl, song, { video: s.v1, audio: s.a1 });
+    expect(placed.map((p) => p.trackId)).toEqual([s.a1]);
+    const tl = appendAtEnd(s.tl, placed, s.ids).timeline;
+    expect(tl.tracks[0]!.clips).toHaveLength(0);
+    const p: Project = { version: 1, name: 't', settings: { width: 1920, height: 1080, frameRate: R30, fit: 'fit' }, assets: [song], timeline: tl };
+    const plan = buildRenderPlan(p, out);
+    expect(plan.totalFrames).toBe(120);
+    expect(plan.video).toEqual([{ from: 0, to: 120, source: null, overlays: [] }]);
+    expect(plan.audio.map((a) => [a.assetId, a.from, a.to])).toEqual([['S', 0, 120]]);
+  });
+});

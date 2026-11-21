@@ -4,3 +4,4 @@ dist
 *.mov
 .DS_Store
 release
+.tmp-audio

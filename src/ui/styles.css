@@ -231,3 +231,5 @@ kbd { font: 10px 'SF Mono', ui-monospace, monospace; color: var(--muted); border
 .menu-item:disabled:hover { background: transparent; color: inherit; }
 .menu-item.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
 .menu-line { height: 1px; background: var(--line-2); margin: 4px 0; }
+
+.pool-item .audio-thumb { display: flex; align-items: center; justify-content: center; background: #1f3a2c; color: #8fd3ad; font-size: 26px; }

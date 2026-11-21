@@ -1,24 +1,21 @@
 import type { MediaHandle, ProjectFileRef, ProjectFiles } from '../application/ports';
+import { accepts, inputAccept, pickerTypes } from './media-types';
 
 export interface PickedFile {
   file: File;
   handle: MediaHandle | null;
 }
 
-const VIDEO_TYPES: FilePickerAcceptType[] = [
-  {
-    description: 'Видео',
-    accept: { 'video/mp4': ['.mp4', '.m4v'], 'video/quicktime': ['.mov'], 'video/webm': ['.webm'], 'video/x-matroska': ['.mkv'] },
-  },
-];
-
 export const hasFileSystemAccess = (): boolean => typeof window.showOpenFilePicker === 'function';
 
-/** Диалог выбора видео. С File System Access доступ к файлам переживает перезагрузку. */
-export async function pickVideoFiles(): Promise<PickedFile[]> {
+/**
+ * Диалог выбора файлов: `media` (видео и звук для монтажа) или `video` (сжатие).
+ * С File System Access доступ к файлам переживает перезагрузку.
+ */
+export async function pickMediaFiles(what: 'video' | 'media' = 'media'): Promise<PickedFile[]> {
   if (window.showOpenFilePicker) {
     try {
-      const handles = await window.showOpenFilePicker({ multiple: true, types: VIDEO_TYPES, id: 'media' });
+      const handles = await window.showOpenFilePicker({ multiple: true, types: pickerTypes(what), id: 'media' });
       return Promise.all(handles.map(async (handle) => ({ file: await handle.getFile(), handle })));
     } catch (err) {
       if ((err as DOMException).name === 'AbortError') return [];
@@ -29,14 +26,14 @@ export async function pickVideoFiles(): Promise<PickedFile[]> {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'video/*,.mov,.mp4,.m4v,.mkv,.webm';
+    input.accept = inputAccept(what);
     input.onchange = () => resolve([...(input.files ?? [])].map((file) => ({ file, handle: null })));
     input.click();
   });
 }
 
-/** Файлы из перетаскивания (Finder → окно). Ручки нужно забрать синхронно в обработчике drop. */
-export function filesFromDrop(e: DragEvent): Promise<PickedFile[]> {
+/** Медиафайлы из перетаскивания (Finder → окно). Ручки нужно забрать синхронно в обработчике drop. */
+export function filesFromDrop(e: DragEvent, what: 'video' | 'media' = 'media'): Promise<PickedFile[]> {
   const items = [...(e.dataTransfer?.items ?? [])].filter((i) => i.kind === 'file');
   const pending = items.map((item) => {
     const file = item.getAsFile();
@@ -45,7 +42,7 @@ export function filesFromDrop(e: DragEvent): Promise<PickedFile[]> {
       .catch(() => null)
       .then((h) => (file ? { file, handle: h && h.kind === 'file' ? (h as FileSystemFileHandle) : null } : null));
   });
-  return Promise.all(pending).then((r) => r.filter((x): x is PickedFile => x !== null && isVideo(x.file)));
+  return Promise.all(pending).then((r) => r.filter((x): x is PickedFile => x !== null && accepts(what, x.file.name, x.file.type)));
 }
 
 /** Файл проекта .vcut из перетаскивания (первый найденный). */
@@ -56,8 +53,6 @@ export function projectFileFromDrop(e: DragEvent): Promise<{ file: File; handle:
   const handle = item.getAsFileSystemHandle?.() ?? Promise.resolve(null);
   return handle.catch(() => null).then((h) => ({ file, handle: h && h.kind === 'file' ? (h as FileSystemFileHandle) : null }));
 }
-
-const isVideo = (f: File) => f.type.startsWith('video/') || /\.(mov|mp4|m4v|mkv|webm)$/i.test(f.name);
 
 /** Выбор файла для рендера. null — пользователь отказался или API нет (тогда рендер в память и скачивание). */
 export async function pickRenderTarget(suggestedName: string): Promise<FileSystemFileHandle | null | 'canceled'> {
@@ -158,10 +153,10 @@ export class FsProjectFiles implements ProjectFiles {
 }
 
 /**
- * Видеофайлы из выбранной папки (с вложенными, до 4 уровней) — для поиска
+ * Медиафайлы из выбранной папки (с вложенными, до 4 уровней): для поиска
  * переехавших исходников. null — пользователь отменил или API нет.
  */
-export async function pickFolderVideos(): Promise<PickedFile[] | null> {
+export async function pickFolderMedia(): Promise<PickedFile[] | null> {
   if (!window.showDirectoryPicker) return null;
   let dir: FileSystemDirectoryHandle;
   try {
@@ -173,7 +168,7 @@ export async function pickFolderVideos(): Promise<PickedFile[] | null> {
   const out: PickedFile[] = [];
   const walk = async (d: FileSystemDirectoryHandle, depth: number) => {
     for await (const entry of d.values()) {
-      if (entry.kind === 'file' && /\.(mov|mp4|m4v|mkv|webm)$/i.test(entry.name)) {
+      if (entry.kind === 'file' && accepts('media', entry.name, '')) {
         const handle = entry as FileSystemFileHandle;
         out.push({ file: await handle.getFile(), handle });
       } else if (entry.kind === 'directory' && depth < 4 && !entry.name.startsWith('.')) {

@@ -132,7 +132,7 @@ export function mountApp(
   const editTab = h('button', { onclick: () => editor.setPage('edit') }, 'Монтаж');
   const deliverTab = h('button', { onclick: () => (playback.stop(), editor.setPage('deliver')) }, 'Рендер');
   const toasts = h('div', { class: 'toasts' });
-  const dropOverlay = h('div', { class: 'drop-overlay' }, 'Отпустите, чтобы добавить видео');
+  const dropOverlay = h('div', { class: 'drop-overlay' }, 'Отпустите, чтобы добавить видео или звук');
 
   root.replaceChildren(
     h(
@@ -206,18 +206,20 @@ export function mountApp(
   window.addEventListener('dragover', (e) => hasFiles(e) && e.preventDefault());
   window.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
-    e.preventDefault();
     dragDepth = 0;
     dropOverlay.classList.remove('on');
+    // Таймлайн уже разместил файлы в точке отпускания.
+    if (e.defaultPrevented) return;
+    e.preventDefault();
     // Файл проекта открывается, видео — импортируются. Ручки забираем синхронно, до первого await.
     const projectFile = projectFileFromDrop(e);
-    const videos = filesFromDrop(e);
+    const media = filesFromDrop(e, 'media');
     void (async () => {
       const pf = await projectFile;
       if (pf) return projectMenu.openDropped(pf.file, pf.handle);
-      const files = await videos;
+      const files = await media;
       if (files.length) void editor.importFiles(files);
-      else editor.notify('error', 'Среди перетащенных файлов нет видео или проекта .vcut');
+      else editor.notify('error', 'Среди перетащенных файлов нет видео, звука или проекта .vcut');
     })();
   });
 
